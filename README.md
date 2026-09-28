@@ -15,7 +15,7 @@ npm test                     # unit tests for tax / numbering / eligibility
 
 | Variable | Required | Notes |
 |---|---|---|
-| `SHOPIFY_STORE` | yes | `karcare-in.myshopify.com` |
+| `SHOPIFY_STORE` | yes | `1t2gmb-fi.myshopify.com` |
 | `SHOPIFY_CLIENT_ID` / `SHOPIFY_CLIENT_SECRET` | yes* | Dev Dashboard app credentials; exchanged for a short-lived token automatically |
 | `SHOPIFY_ACCESS_TOKEN` | yes* | Alternative: static `shpat_…` token (takes precedence) |
 | `APP_PASSWORD` | prod | Password for the login screen. Without it, production requests are refused |
