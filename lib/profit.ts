@@ -13,15 +13,23 @@ export interface AdRow {
   spend: number; // ex-GST, as shown in Meta Ads Manager
 }
 
-/** Money for a slice of business, all ex-GST. */
+/**
+ * Money for a slice of business, as cash: amounts actually collected / paid, including GST.
+ * GST is then settled separately (output on sales minus input credit on costs), and what's
+ * left is profit in pocket (before income tax).
+ */
 export interface Pnl {
-  revenue: number;
-  cogs: number;
-  shipping: number;
-  gateway: number;
-  packaging: number;
-  ads: number;
-  profit: number;
+  collected: number; // from customers, incl. GST
+  cogs: number; // product cost (no GST credit)
+  shipping: number; // freight + COD charge paid, incl. GST
+  gateway: number; // Fastrr fees paid, incl. GST
+  packaging: number; // incl. GST
+  ads: number; // Meta ads paid, incl. 18% GST
+  adSpend: number; // Meta "amount spent" (ex-GST), for ROAS
+  gstOutput: number; // GST payable on sales
+  gstInput: number; // GST credit on shipping, fees, packaging, ads
+  netGst: number; // gstOutput − gstInput
+  profit: number; // collected − all costs − netGst
 }
 
 export interface Counts {
@@ -49,7 +57,11 @@ export interface ProfitData {
   totals: ProfitRow;
   days: ProfitRow[];
   products: ProfitRow[];
-  gst: { output: number; input: number; net: number };
+  gst: {
+    output: number;
+    input: { shipping: number; gateway: number; packaging: number; ads: number; total: number };
+    net: number;
+  };
   ads: { configured: boolean; error: string | null; unassigned: { product: string; spend: number }[] };
   missingCosts: string[];
   syncedAt: string;
@@ -107,8 +119,11 @@ function statusOf(o: Normalized): ProfitStatus {
   return o.outcome === "Delivered" ? "Delivered" : "Prepaid"; // prepaid: revenue is certain
 }
 
+const MONEY = ["collected", "cogs", "shipping", "gateway", "packaging", "ads", "adSpend", "gstOutput", "gstInput", "netGst", "profit", "confirmedProfit"] as const;
+
 const emptyRow = (key: string): ProfitRow => ({
-  key, revenue: 0, cogs: 0, shipping: 0, gateway: 0, packaging: 0, ads: 0, profit: 0, confirmedProfit: 0,
+  key, collected: 0, cogs: 0, shipping: 0, gateway: 0, packaging: 0, ads: 0, adSpend: 0,
+  gstOutput: 0, gstInput: 0, netGst: 0, profit: 0, confirmedProfit: 0,
   orders: 0, units: 0, delivered: 0, rto: 0, cancelled: 0, pending: 0,
 });
 
@@ -148,7 +163,7 @@ export function buildProfit(
   const days = new Map<string, ProfitRow>();
   const products = new Map<string, ProfitRow>();
   const totals = emptyRow("total");
-  const gst = { output: 0, input: 0 };
+  const gstIn = { shipping: 0, gateway: 0, packaging: 0, ads: 0 };
   const missing = new Set<string>();
   const row = (map: Map<string, ProfitRow>, key: string) => {
     if (!map.has(key)) map.set(key, emptyRow(key));
@@ -178,25 +193,31 @@ export function buildProfit(
     const weights = o.lineItems.map((l) => toPaise(l.discountedTotal || l.originalUnitPrice * l.quantity));
     const share = (amount: number) => allocate(toPaise(amount), weights).map(fromPaise);
 
-    const lines = o.lineItems.map(() => ({ revenue: 0, cogs: 0, shipping: 0, gateway: 0, packaging: 0 }));
+    const gstPart = (incl: number, rate: number) => incl - exGst(incl, rate);
+    const lines = o.lineItems.map(() => ({ collected: 0, cogs: 0, shipping: 0, gateway: 0, packaging: 0, gstOutput: 0, gstInput: 0 }));
     for (const [sc, w] of mix) {
-      const rev = share(exGst(sc.revenueIncl, GST_RATE) * w);
-      const ship = share((exGst(sc.freightIncl, COSTS.shippingGstRate) + exGst(sc.codIncl, COSTS.shippingGstRate)) * w);
-      const gw = share(exGst(sc.gatewayIncl, COSTS.gatewayGstRate) * w);
-      const pack = share(exGst(sc.packagingIncl, COSTS.packagingGstRate) * w);
+      const shipIncl = sc.freightIncl + sc.codIncl;
+      const col = share(sc.revenueIncl * w);
+      const out = share(gstPart(sc.revenueIncl, GST_RATE) * w);
+      const ship = share(shipIncl * w);
+      const gw = share(sc.gatewayIncl * w);
+      const pack = share(sc.packagingIncl * w);
+      const inShip = gstPart(shipIncl, COSTS.shippingGstRate) * w;
+      const inGw = gstPart(sc.gatewayIncl, COSTS.gatewayGstRate) * w;
+      const inPack = gstPart(sc.packagingIncl, COSTS.packagingGstRate) * w;
+      const inp = share(inShip + inGw + inPack);
       lines.forEach((ln, i) => {
-        ln.revenue += rev[i];
+        ln.collected += col[i];
         ln.cogs += sc.cogs[i] * w;
         ln.shipping += ship[i];
         ln.gateway += gw[i];
         ln.packaging += pack[i];
+        ln.gstOutput += out[i];
+        ln.gstInput += inp[i];
       });
-      gst.output += (sc.revenueIncl - exGst(sc.revenueIncl, GST_RATE)) * w;
-      gst.input +=
-        ((sc.freightIncl + sc.codIncl) * (1 - 1 / (1 + COSTS.shippingGstRate / 100)) +
-          sc.gatewayIncl * (1 - 1 / (1 + COSTS.gatewayGstRate / 100)) +
-          sc.packagingIncl * (1 - 1 / (1 + COSTS.packagingGstRate / 100))) *
-        w;
+      gstIn.shipping += inShip;
+      gstIn.gateway += inGw;
+      gstIn.packaging += inPack;
     }
 
     const day = row(days, dayOf(o.createdAt));
@@ -213,13 +234,17 @@ export function buildProfit(
     };
     o.lineItems.forEach((l, i) => {
       const ln = lines[i];
-      const profit = ln.revenue - ln.cogs - ln.shipping - ln.gateway - ln.packaging;
+      const netGst = ln.gstOutput - ln.gstInput;
+      const profit = ln.collected - ln.cogs - ln.shipping - ln.gateway - ln.packaging - netGst;
       for (const r of [day, row(products, l.title), totals]) {
-        r.revenue += ln.revenue;
+        r.collected += ln.collected;
         r.cogs += ln.cogs;
         r.shipping += ln.shipping;
         r.gateway += ln.gateway;
         r.packaging += ln.packaging;
+        r.gstOutput += ln.gstOutput;
+        r.gstInput += ln.gstInput;
+        r.netGst += netGst;
         r.profit += profit;
         if (status !== "Pending") r.confirmedProfit += profit;
         addCounts(r, l.quantity);
@@ -234,19 +259,24 @@ export function buildProfit(
     if (a.date < dayOf(start) || a.date >= dayOf(end) || !a.spend) continue;
     const key = norm(a.product);
     const title = titles.find((t) => key && (norm(t).includes(key) || key.includes(norm(t))));
+    // You pay spend + 18% GST; the GST comes back as input credit, so profit drops by the spend.
+    const gst = a.spend * (COSTS.adsGstRate / 100);
     for (const r of [row(days, a.date), title ? products.get(title)! : null, totals]) {
       if (!r) continue;
-      r.ads += a.spend;
+      r.adSpend += a.spend;
+      r.ads += a.spend + gst;
+      r.gstInput += gst;
+      r.netGst -= gst;
       r.profit -= a.spend;
       r.confirmedProfit -= a.spend;
     }
     if (!title) unassigned.set(a.product || "(blank)", (unassigned.get(a.product || "(blank)") ?? 0) + a.spend);
-    gst.input += a.spend * (COSTS.adsGstRate / 100);
+    gstIn.ads += gst;
   }
 
   const round = (r: ProfitRow): ProfitRow => {
     const out = { ...r };
-    for (const k of ["revenue", "cogs", "shipping", "gateway", "packaging", "ads", "profit", "confirmedProfit"] as const) {
+    for (const k of MONEY) {
       out[k] = Math.round(r[k] * 100) / 100;
     }
     return out;
@@ -260,8 +290,18 @@ export function buildProfit(
     deliveryRateSample: sample,
     totals: round(totals),
     days: [...days.values()].sort((a, b) => a.key.localeCompare(b.key)).map(round),
-    products: [...products.values()].sort((a, b) => b.revenue - a.revenue).map(round),
-    gst: { output: r2(gst.output), input: r2(gst.input), net: r2(gst.output - gst.input) },
+    products: [...products.values()].sort((a, b) => b.collected - a.collected).map(round),
+    gst: {
+      output: r2(totals.gstOutput),
+      input: {
+        shipping: r2(gstIn.shipping),
+        gateway: r2(gstIn.gateway),
+        packaging: r2(gstIn.packaging),
+        ads: r2(gstIn.ads),
+        total: r2(totals.gstInput),
+      },
+      net: r2(totals.netGst),
+    },
     ads: {
       configured: ads.configured,
       error: ads.error,

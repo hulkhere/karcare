@@ -18,36 +18,73 @@ const thL = `${thBase} text-left`;
 const td = "whitespace-nowrap px-3 py-2.5 text-right tabular-nums";
 const tone = (n: number) => (n < 0 ? "text-rose-700" : "text-emerald-700");
 
+const sales = (t: ProfitRow) => t.collected - t.gstOutput; // sales ex-GST, for margins
+
+function Line({ label, value, base, strong, muted, bar = true }: {
+  label: string; value: number; base: number; strong?: boolean; muted?: boolean; bar?: boolean;
+}) {
+  return (
+    <div className={`flex items-center gap-3 text-sm ${strong ? "font-semibold" : ""}`}>
+      <div className={`w-60 shrink-0 ${muted ? "text-slate-500" : "text-slate-700"}`}>{label}</div>
+      <div className="relative h-2 flex-1 overflow-hidden rounded-full bg-slate-100">
+        {bar && (
+          <div
+            className={`absolute inset-y-0 left-0 rounded-full ${value >= 0 ? "bg-slate-800" : "bg-rose-400"}`}
+            style={{ width: `${base ? Math.min(100, (Math.abs(value) / base) * 100) : 0}%` }}
+          />
+        )}
+      </div>
+      <div className={`w-32 text-right tabular-nums ${strong ? tone(value) : ""}`}>{r(value)}</div>
+    </div>
+  );
+}
+
 function Breakdown({ t }: { t: ProfitRow }) {
-  const items = [
-    { label: "Revenue (ex-GST)", value: t.revenue, strong: true },
-    { label: "Cost of goods", value: -t.cogs },
-    { label: "Shipping (freight + COD charge)", value: -t.shipping },
-    { label: "Payment gateway (Fastrr)", value: -t.gateway },
-    { label: "Packaging", value: -t.packaging },
-    { label: "Meta ads", value: -t.ads },
-  ];
+  const before = t.collected - t.cogs - t.shipping - t.gateway - t.packaging - t.ads;
   return (
     <div className="space-y-2">
-      {items.map((i) => (
-        <div key={i.label} className="flex items-center gap-3 text-sm">
-          <div className="w-56 shrink-0 text-slate-600">{i.label}</div>
-          <div className="relative h-2 flex-1 overflow-hidden rounded-full bg-slate-100">
-            <div
-              className={`absolute inset-y-0 left-0 rounded-full ${i.value >= 0 ? "bg-slate-800" : "bg-rose-400"}`}
-              style={{ width: `${t.revenue ? Math.min(100, (Math.abs(i.value) / t.revenue) * 100) : 0}%` }}
-            />
-          </div>
-          <div className={`w-28 text-right tabular-nums ${i.strong ? "font-semibold" : ""}`}>{r(i.value)}</div>
-          <div className="w-14 text-right text-xs tabular-nums text-slate-400">{pct(Math.abs(i.value), t.revenue)}</div>
-        </div>
-      ))}
-      <div className="flex items-center gap-3 border-t border-slate-200 pt-2 text-sm font-semibold">
-        <div className="w-56 shrink-0">Profit</div>
-        <div className="flex-1" />
-        <div className={`w-28 text-right tabular-nums ${tone(t.profit)}`}>{r(t.profit)}</div>
-        <div className="w-14 text-right text-xs tabular-nums text-slate-500">{pct(t.profit, t.revenue)}</div>
+      <Line label="Collected from customers (incl. GST)" value={t.collected} base={t.collected} strong />
+      <Line label="Product cost" value={-t.cogs} base={t.collected} />
+      <Line label="Shipping — freight + COD charge (incl. GST)" value={-t.shipping} base={t.collected} />
+      <Line label="Fastrr payment fees (incl. GST)" value={-t.gateway} base={t.collected} />
+      <Line label="Packaging (incl. GST)" value={-t.packaging} base={t.collected} />
+      <Line label="Meta ads (incl. 18% GST)" value={-t.ads} base={t.collected} />
+      <div className="border-t border-slate-200 pt-2">
+        <Line label="Left before settling GST" value={before} base={t.collected} strong bar={false} />
       </div>
+      <Line label="GST payable on sales" value={-t.gstOutput} base={t.collected} muted />
+      <Line label="GST input credit on costs & ads" value={t.gstInput} base={t.collected} muted />
+      <div className="border-t border-slate-200 pt-2">
+        <Line label="Profit in pocket (before income tax)" value={t.profit} base={t.collected} strong bar={false} />
+      </div>
+    </div>
+  );
+}
+
+function GstCard({ g }: { g: ProfitData["gst"] }) {
+  const row = (label: string, value: number, cls = "") => (
+    <div className={`flex justify-between py-1 text-sm ${cls}`}>
+      <span>{label}</span>
+      <span className="tabular-nums">{r(value)}</span>
+    </div>
+  );
+  return (
+    <div>
+      {row("GST payable on sales", g.output, "font-medium")}
+      <div className="mt-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Input credit</div>
+      <div className="text-slate-600">
+        {row("Shipping (18%)", g.input.shipping)}
+        {row("Fastrr fees (18%)", g.input.gateway)}
+        {row("Packaging (~10%)", g.input.packaging)}
+        {row("Meta ads (18%)", g.input.ads)}
+      </div>
+      {row("Total input credit", g.input.total, "border-t border-slate-100 font-medium")}
+      {g.net >= 0
+        ? row("Net GST to pay", g.net, "mt-1 border-t border-slate-300 pt-2 text-base font-semibold")
+        : row("Nothing to pay — credit carried forward", -g.net, "mt-1 border-t border-slate-300 pt-2 text-base font-semibold text-emerald-700")}
+      <p className="mt-2 text-xs text-slate-400">
+        Estimate for orders placed this month. Your actual GST return goes by invoice date — use CA Export for filing.
+      </p>
     </div>
   );
 }
@@ -70,7 +107,7 @@ function Profit() {
 
   return (
     <>
-      <PageHeader title="Profit" subtitle={`Orders placed in ${monthLabel(month, year)}, after every cost — all amounts ex-GST`}>
+      <PageHeader title="Profit" subtitle={`Orders placed in ${monthLabel(month, year)} — cash in and out, GST settled, profit in pocket before income tax`}>
         <MonthPicker month={month} year={year} onChange={setMonthYear} onRefresh={refresh} loading={loading} />
       </PageHeader>
 
@@ -96,39 +133,46 @@ function Profit() {
       {data && t && (
         <>
           <div className="grid grid-cols-2 gap-3 lg:grid-cols-6">
-            <Stat label="Profit" value={r(t.profit)} tone={t.profit < 0 ? "red" : "green"} hint={`${pct(t.profit, t.revenue)} margin`} />
+            <Stat label="Profit in pocket" value={r(t.profit)} tone={t.profit < 0 ? "red" : "green"} hint={`${pct(t.profit, sales(t))} of sales ex-GST`} />
             <Stat label="Confirmed profit" value={r(t.confirmedProfit)} hint={`${t.pending} COD still pending`} />
-            <Stat label="Revenue" value={r(t.revenue)} hint={`${t.orders} orders · ${t.units} units`} />
-            <Stat label="Meta ads" value={r(t.ads)} hint={t.ads ? `ROAS ${(t.revenue / t.ads).toFixed(2)}×` : "—"} />
+            <Stat label="Collected" value={r(t.collected)} hint={`${t.orders} orders · ${t.units} units`} />
+            <Stat label="Meta ad spend" value={r(t.adSpend)} hint={t.adSpend ? `ROAS ${(t.collected / t.adSpend).toFixed(2)}× · paid ${r(t.ads)}` : "—"} />
+            <Stat
+              label={data.gst.net >= 0 ? "Net GST to pay" : "GST credit carried forward"}
+              value={r(Math.abs(data.gst.net))}
+              hint={`${r(data.gst.output)} payable − ${r(data.gst.input.total)} credit`}
+            />
             <Stat label="Profit / order" value={t.orders ? r(t.profit / t.orders) : "—"} />
-            <Stat label="Net GST payable (est.)" value={r(data.gst.net)} hint={`${r(data.gst.output)} out − ${r(data.gst.input)} input`} />
           </div>
 
           <div className="grid gap-6 lg:grid-cols-5">
-            <Card className="lg:col-span-3" title="Where the money goes">
+            <Card className="lg:col-span-3" title="Where the money goes" subtitle="Cash in and out, then GST settled">
               <Breakdown t={t} />
             </Card>
-            <Card className="lg:col-span-2" title="How it's calculated">
-              <ul className="space-y-1.5 text-xs text-slate-600">
-                <li>• Orders count on the day they&apos;re placed — the day the ad money was spent.</li>
-                <li>
-                  • Delivered: full revenue − product cost − freight ₹{COSTS.freight} (+ ₹{COSTS.codCharge} COD charge) −
-                  packaging ₹{COSTS.packaging} − Fastrr fee ({COSTS.gatewayPrepaid * 100}% UPI / {COSTS.gatewayPartialCod * 100}% partial COD).
-                </li>
-                <li>• RTO: only the ₹99 advance kept · goods restocked · freight both ways · packaging and fee lost.</li>
-                <li>• Cancelled before shipping: ₹99 advance kept · only the fee spent.</li>
-                <li>
-                  • COD still in transit: counted at your recent delivery rate,{" "}
-                  <strong>{Math.round(data.deliveryRate * 100)}%</strong>
-                  {data.deliveryRateSample >= 10 ? ` (last ${data.deliveryRateSample} settled COD orders)` : " (default until 10 COD orders settle)"}.
-                  &ldquo;Confirmed profit&rdquo; leaves them out.
-                </li>
-                <li>• GST is removed from every amount; what you pay on costs comes back as input credit.</li>
-              </ul>
+            <Card className="lg:col-span-2" title="GST">
+              <GstCard g={data.gst} />
             </Card>
           </div>
 
-          <Card title="By product" padded={false}>
+          <Card title="How it's calculated">
+            <ul className="grid gap-x-8 gap-y-1.5 text-xs text-slate-600 md:grid-cols-2">
+              <li>• Orders count on the day they&apos;re placed — the day the ad money was spent.</li>
+              <li>
+                • Delivered: product cost, freight ₹{COSTS.freight} (+ ₹{COSTS.codCharge} COD charge), packaging ₹{COSTS.packaging},
+                Fastrr fee {COSTS.gatewayPrepaid * 100}% UPI / {COSTS.gatewayPartialCod * 100}% partial COD — all as paid, incl. GST.
+              </li>
+              <li>• RTO: only the ₹99 advance kept · goods restocked · freight both ways · packaging and fee lost.</li>
+              <li>• Cancelled before shipping: ₹99 advance kept · only the fee spent.</li>
+              <li>
+                • COD still in transit: counted at your recent delivery rate, <strong>{Math.round(data.deliveryRate * 100)}%</strong>
+                {data.deliveryRateSample >= 10 ? ` (last ${data.deliveryRateSample} settled COD orders)` : " (default until 10 COD orders settle)"}.
+                &ldquo;Confirmed profit&rdquo; leaves them out.
+              </li>
+              <li>• Profit in pocket = collected − everything paid − net GST. Only income tax is left.</li>
+            </ul>
+          </Card>
+
+          <Card title="By product" subtitle="Amounts as paid, incl. GST · margin on sales ex-GST" padded={false}>
             <div className="overflow-x-auto">
               <table className="min-w-full text-sm">
                 <thead className="border-b border-slate-100 bg-slate-50/70">
@@ -137,12 +181,15 @@ function Profit() {
                     <th className={th}>Orders</th>
                     <th className={th}>Units</th>
                     <th className={th} title="Sold (delivered, or prepaid) · Returned · COD pending">Sold · RTO · Pend</th>
-                    <th className={th}>Revenue</th>
+                    <th className={th}>Collected</th>
                     <th className={th}>Goods</th>
                     <th className={th}>Shipping</th>
                     <th className={th}>Fees</th>
                     <th className={th}>Packaging</th>
                     <th className={th}>Ads</th>
+                    <th className={th}>GST payable</th>
+                    <th className={th}>GST credit</th>
+                    <th className={th}>Net GST</th>
                     <th className={th}>Profit</th>
                     <th className={th}>Margin</th>
                     <th className={th}>Per order</th>
@@ -151,18 +198,21 @@ function Profit() {
                 <tbody className="divide-y divide-slate-100">
                   {data.products.map((p) => (
                     <tr key={p.key} className="hover:bg-slate-50/60">
-                      <td className="px-3 py-2.5 font-medium">{p.key}</td>
+                      <td className="min-w-48 px-3 py-2.5 font-medium">{p.key}</td>
                       <td className={td}>{p.orders}</td>
                       <td className={td}>{p.units}</td>
                       <td className={td}><Outcomes row={p} /></td>
-                      <td className={td}>{r(p.revenue)}</td>
+                      <td className={td}>{r(p.collected)}</td>
                       <td className={td}>{r(p.cogs)}</td>
                       <td className={td}>{r(p.shipping)}</td>
                       <td className={td}>{r(p.gateway)}</td>
                       <td className={td}>{r(p.packaging)}</td>
                       <td className={td}>{r(p.ads)}</td>
+                      <td className={`${td} text-slate-500`}>{r(p.gstOutput)}</td>
+                      <td className={`${td} text-slate-500`}>{r(p.gstInput)}</td>
+                      <td className={td}>{r(p.netGst)}</td>
                       <td className={`${td} font-semibold ${tone(p.profit)}`}>{r(p.profit)}</td>
-                      <td className={td}>{pct(p.profit, p.revenue)}</td>
+                      <td className={td}>{pct(p.profit, sales(p))}</td>
                       <td className={td}>{p.orders ? r(p.profit / p.orders) : "—"}</td>
                     </tr>
                   ))}
@@ -180,10 +230,11 @@ function Profit() {
                     <th className={thL}>Date</th>
                     <th className={th}>Orders</th>
                     <th className={th} title="Sold (delivered, or prepaid) · Returned · COD pending">Sold · RTO · Pend</th>
-                    <th className={th}>Revenue</th>
-                    <th className={th}>Costs</th>
-                    <th className={th}>Ads</th>
-                    <th className={th}>ROAS</th>
+                    <th className={th}>Collected</th>
+                    <th className={th} title="Product, shipping, fees, packaging — incl. GST">Costs</th>
+                    <th className={th} title="Paid incl. 18% GST">Ads</th>
+                    <th className={th} title="Collected ÷ ad spend (ex-GST, as in Ads Manager)">ROAS</th>
+                    <th className={th}>Net GST</th>
                     <th className={th}>Profit</th>
                     <th className={th}>Confirmed</th>
                   </tr>
@@ -194,10 +245,11 @@ function Profit() {
                       <td className="whitespace-nowrap px-3 py-2.5 text-left font-medium">{formatDateIST(`${d.key}T06:30:00Z`)}</td>
                       <td className={td}>{d.orders}</td>
                       <td className={td}><Outcomes row={d} /></td>
-                      <td className={td}>{r(d.revenue)}</td>
+                      <td className={td}>{r(d.collected)}</td>
                       <td className={td}>{r(d.cogs + d.shipping + d.gateway + d.packaging)}</td>
                       <td className={td}>{d.ads ? r(d.ads) : <span className="text-amber-600">not entered</span>}</td>
-                      <td className={td}>{d.ads ? `${(d.revenue / d.ads).toFixed(2)}×` : "—"}</td>
+                      <td className={td}>{d.adSpend ? `${(d.collected / d.adSpend).toFixed(2)}×` : "—"}</td>
+                      <td className={td}>{r(d.netGst)}</td>
                       <td className={`${td} font-semibold ${tone(d.profit)}`}>{r(d.profit)}</td>
                       <td className={`${td} text-slate-500`}>{r(d.confirmedProfit)}</td>
                     </tr>
@@ -206,10 +258,11 @@ function Profit() {
                     <td className="px-3 py-2.5">Total</td>
                     <td className={td}>{t.orders}</td>
                     <td className={td}><Outcomes row={t} /></td>
-                    <td className={td}>{r(t.revenue)}</td>
+                    <td className={td}>{r(t.collected)}</td>
                     <td className={td}>{r(t.cogs + t.shipping + t.gateway + t.packaging)}</td>
                     <td className={td}>{r(t.ads)}</td>
-                    <td className={td}>{t.ads ? `${(t.revenue / t.ads).toFixed(2)}×` : "—"}</td>
+                    <td className={td}>{t.adSpend ? `${(t.collected / t.adSpend).toFixed(2)}×` : "—"}</td>
+                    <td className={td}>{r(t.netGst)}</td>
                     <td className={`${td} ${tone(t.profit)}`}>{r(t.profit)}</td>
                     <td className={td}>{r(t.confirmedProfit)}</td>
                   </tr>

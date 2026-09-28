@@ -53,18 +53,18 @@ To number invoices in order, the app counts every order since the start of the s
 - **Orders** – orders placed in the month plus earlier orders paid in it, with delivery status and invoice number. Filters: search (order #, invoice #, customer, city, AWB), invoice status, payment, delivery status, state; delivery-status chips filter too.
 - **CA Export** – the standard rules with counts, the month's number range, and one button that downloads a ZIP for the CA: all invoices in one PDF, each invoice as its own PDF, invoice register, state-wise and HSN summaries (CSV).
 - **GST Summary** – state-wise and HSN totals for GSTR-1 (filter: prepaid / COD delivered / advances retained), plus orders not invoiced this month and why.
-- **Profit** – profit for orders placed in the month, by product and by day, after product cost, shipping, Fastrr fees, packaging and Meta ads (all ex-GST), plus estimated net GST.
+- **Profit** – cash collected, every cost as paid, GST payable / input credit / net GST, and profit in pocket — overall, by product and by day.
 - **Insights** – orders placed, prepaid vs COD, delivered / RTO / cancelled with RTO rate, orders per product, and GST per product.
 
 ## Profit
 
-Orders count on the day they're placed (the day the ad money was spent). Everything is ex-GST — GST paid on costs is input credit.
+Orders count on the day they're placed (the day the ad money was spent). Amounts are shown as cash — collected and paid **including GST** — then GST is settled separately: GST payable on sales minus input credit on shipping (18%), Fastrr fees (18%), packaging (~10%) and Meta ads (18%). What's left is **profit in pocket**, before income tax only.
 
 | Outcome | Revenue | Product cost | Shipping | Packaging | Fastrr fee |
 |---|---|---|---|---|---|
-| Delivered / prepaid | order ÷ 1.18 | per variant | ₹67.50 (+ ₹40 COD charge) | ₹10 | 0.8% UPI / 1.2% partial COD |
-| RTO | ₹99 advance ÷ 1.18 | ₹0 (restocked) | ₹67.50 × 2 | ₹10 | fee lost |
-| Cancelled before shipping | ₹99 advance ÷ 1.18 | ₹0 | ₹0 | ₹0 | fee lost |
+| Delivered / prepaid | full order | per variant | ₹67.50 (+ ₹40 COD charge) | ₹10 | 0.8% UPI / 1.2% partial COD |
+| RTO | ₹99 advance | ₹0 (restocked) | ₹67.50 × 2 | ₹10 | fee lost |
+| Cancelled before shipping | ₹99 advance | ₹0 | ₹0 | ₹0 | fee lost |
 
 COD orders still in transit are counted at the recent COD delivery rate; **Confirmed profit** leaves them out. All rates and product costs are in `lib/costs.ts`.
 

@@ -37,40 +37,46 @@ describe("unit costs", () => {
   });
 });
 
-describe("order economics (ex-GST)", () => {
-  it("prepaid delivered", () => {
+describe("order economics (cash incl. GST, then GST settled)", () => {
+  it("prepaid delivered: GST shown separately; profit in pocket = ex-GST profit", () => {
     const t = run([order({ at: "2026-09-05T06:00:00Z", outcome: "delivered" })]).totals;
-    expect(t.revenue).toBe(592.37); // 699 / 1.18
+    expect(t.collected).toBe(699);
     expect(t.cogs).toBe(112);
-    expect(t.shipping).toBe(57.2); // 67.50 / 1.18
-    expect(t.gateway).toBe(r2((699 * 0.008) / 1.18)); // 4.74
-    expect(t.packaging).toBe(9.09); // 10 / 1.10
-    expect(t.profit).toBe(r2(592.37 - 112 - 57.2 - 4.74 - 9.09));
+    expect(t.shipping).toBe(67.5);
+    expect(t.gateway).toBe(5.59); // 0.8% of 699
+    expect(t.packaging).toBe(10);
+    expect(t.gstOutput).toBe(106.63); // 699 − 699/1.18
+    expect(t.gstInput).toBe(r2(67.5 * (18 / 118) + 5.592 * (18 / 118) + 10 * (10 / 110))); // 12.06
+    expect(t.netGst).toBe(r2(t.gstOutput - t.gstInput));
+    expect(t.profit).toBe(r2(699 - 112 - 67.5 - 5.592 - 10 - (t.gstOutput - t.gstInput)));
+    // same as the ex-GST view: 592.37 − 112 − 57.20 − 4.74 − 9.09
+    expect(t.profit).toBeCloseTo(409.34, 1);
   });
 
   it("COD delivered adds the ₹40 COD charge and the 1.2% partial-COD fee", () => {
     const t = run([order({ at: "2026-09-05T06:00:00Z", cod: true, outcome: "delivered" })]).totals;
-    expect(t.shipping).toBe(r2((67.5 + 40) / 1.18)); // 91.10
-    expect(t.gateway).toBe(r2((699 * 0.012) / 1.18)); // 7.11
+    expect(t.shipping).toBe(107.5);
+    expect(t.gateway).toBe(8.39); // 1.2% of 699
   });
 
   it("RTO: ₹99 advance kept, goods restocked, freight both ways, packaging and fee lost", () => {
     const t = run([order({ at: "2026-09-05T06:00:00Z", cod: true, outcome: "rto" })]).totals;
-    expect(t.revenue).toBe(83.9);
+    expect(t.collected).toBe(99);
+    expect(t.gstOutput).toBe(15.1);
     expect(t.cogs).toBe(0);
-    expect(t.shipping).toBe(r2(135 / 1.18)); // 114.41
-    expect(t.packaging).toBe(9.09);
-    expect(t.gateway).toBe(7.11);
+    expect(t.shipping).toBe(135);
+    expect(t.packaging).toBe(10);
+    expect(t.gateway).toBe(8.39);
     expect(t.rto).toBe(1);
     expect(t.profit).toBeLessThan(0);
   });
 
   it("COD cancelled before shipping: advance kept, only the fee spent", () => {
     const t = run([order({ at: "2026-09-05T06:00:00Z", cod: true, outcome: "cancel" })]).totals;
-    expect(t.revenue).toBe(83.9);
+    expect(t.collected).toBe(99);
     expect(t.shipping).toBe(0);
     expect(t.packaging).toBe(0);
-    expect(t.profit).toBe(r2(83.9 - 7.11));
+    expect(t.profit).toBe(r2(83.9 - 8.388 / 1.18));
   });
 
   it("pending COD counted at the recent delivery rate; excluded from confirmed profit", () => {
@@ -102,12 +108,17 @@ describe("order economics (ex-GST)", () => {
       [order({ at: "2026-09-05T06:00:00Z", outcome: "delivered" }), order({ at: "2026-09-05T07:00:00Z", outcome: "delivered", title: "Car Door Protector - Latch Cover", variant: "4pcs - For 1 Car", total: 599 })],
       ads,
     );
-    expect(d.products.find((p) => p.key === "Door Shock Absorbers")!.ads).toBe(300);
-    expect(d.products.find((p) => p.key.startsWith("Car Door"))!.ads).toBe(100);
-    expect(d.totals.ads).toBe(450);
-    expect(d.days.find((x) => x.key === "2026-09-06")!.ads).toBe(50);
+    expect(d.products.find((p) => p.key === "Door Shock Absorbers")!.adSpend).toBe(300);
+    expect(d.products.find((p) => p.key.startsWith("Car Door"))!.adSpend).toBe(100);
+    expect(d.totals.adSpend).toBe(450);
+    expect(d.totals.ads).toBe(531); // paid incl. 18% GST
+    expect(d.gst.input.ads).toBe(81);
+    expect(d.days.find((x) => x.key === "2026-09-06")!.adSpend).toBe(50);
+    // ads reduce profit by the spend only (the GST is credited back)
+    const without = run([order({ at: "2026-09-05T06:00:00Z", outcome: "delivered" }), order({ at: "2026-09-05T07:00:00Z", outcome: "delivered", title: "Car Door Protector - Latch Cover", variant: "4pcs - For 1 Car", total: 599 })]);
+    expect(r2(without.totals.profit - d.totals.profit)).toBe(450);
     expect(d.ads.unassigned).toEqual([{ product: "Old campaign", spend: 50 }]);
-    expect(d.gst.input).toBeGreaterThan(450 * 0.18);
+    expect(d.gst.net).toBe(r2(d.gst.output - d.gst.input.total));
   });
 
   it("orders count on the IST day they were placed", () => {
