@@ -41,7 +41,10 @@ async function json<T>(res: Response): Promise<T> {
  * Data comes from one Shopify bulk export per invoice series (financial year), reused for
  * 30 minutes across tabs and months; "Refresh" pulls a fresh export.
  */
-export function useMonthData({ defaultToPrevious = false } = {}) {
+export function useMonthData<T extends { month: number; year: number } = MonthData>({
+  defaultToPrevious = false,
+  endpoint = "/api/month",
+} = {}) {
   const params = useSearchParams();
   const router = useRouter();
   const fallback = defaultToPrevious ? previousMonth(currentMonthIST()) : currentMonthIST();
@@ -50,7 +53,7 @@ export function useMonthData({ defaultToPrevious = false } = {}) {
   const s = seriesStartFor({ month, year });
   const series = `${s.year}-${s.month}`;
 
-  const [data, setData] = useState<MonthData | null>(null);
+  const [data, setData] = useState<T | null>(null);
   const [phase, setPhase] = useState<Phase>("loading");
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
@@ -97,8 +100,8 @@ export function useMonthData({ defaultToPrevious = false } = {}) {
           writeExport(series, id);
         }
         setPhase("loading");
-        const md = await json<MonthData>(
-          await fetch(`/api/month?id=${encodeURIComponent(id!)}&month=${month}&year=${year}`, { cache: "no-store" }),
+        const md = await json<T>(
+          await fetch(`${endpoint}?id=${encodeURIComponent(id!)}&month=${month}&year=${year}`, { cache: "no-store" }),
         );
         if (!alive()) return;
         setData(md);
@@ -110,7 +113,7 @@ export function useMonthData({ defaultToPrevious = false } = {}) {
         setPhase("error");
       }
     },
-    [month, year, series],
+    [month, year, series, endpoint],
   );
 
   useEffect(() => {

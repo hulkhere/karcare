@@ -8,6 +8,7 @@ const TABS = [
   { href: "/ca-export", label: "CA Export" },
   { href: "/summary", label: "GST Summary" },
   { href: "/insights", label: "Insights" },
+  { href: "/profit", label: "Profit" },
 ];
 
 export function NavTabs() {

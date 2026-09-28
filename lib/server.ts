@@ -1,5 +1,7 @@
 import "server-only";
-import { buildMonth } from "./orders";
+import { buildMonth, normalize } from "./orders";
+import { buildProfit } from "./profit";
+import { fetchAdSpend } from "./sheet";
 import type { RawOrder } from "./raw";
 import { downloadOrders, exportStatus, fetchFulfillmentEvents } from "./shopify";
 
@@ -14,7 +16,7 @@ export function parseMonthYear(month: unknown, year: unknown) {
 // Keep the last few downloaded exports in memory so switching months is instant.
 const cache = new Map<string, { orders: RawOrder[]; at: string }>();
 
-export async function monthFromExport(exportId: string, month: number, year: number) {
+async function ordersFromExport(exportId: string) {
   let hit = cache.get(exportId);
   if (!hit) {
     const status = await exportStatus(exportId);
@@ -25,7 +27,17 @@ export async function monthFromExport(exportId: string, month: number, year: num
     cache.set(exportId, hit);
     if (cache.size > 3) cache.delete(cache.keys().next().value!);
   }
+  return hit;
+}
+
+export async function monthFromExport(exportId: string, month: number, year: number) {
+  const hit = await ordersFromExport(exportId);
   return buildMonth(hit.orders, { month, year }, { syncedAt: hit.at });
+}
+
+export async function profitFromExport(exportId: string, month: number, year: number) {
+  const [hit, ads] = await Promise.all([ordersFromExport(exportId), fetchAdSpend()]);
+  return buildProfit(hit.orders.map(normalize), { month, year }, ads, { syncedAt: hit.at });
 }
 
 const FAILED = ["FAILURE", "NOT_DELIVERED"];

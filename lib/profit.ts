@@ -1,0 +1,273 @@
+import { COSTS, exGst, unitCost } from "./costs";
+import { istParts, monthRangeUTC } from "./dates";
+import { GST_RATE } from "./constants";
+import { allocate, fromPaise, toPaise } from "./gst";
+import type { normalize } from "./orders";
+
+type Normalized = ReturnType<typeof normalize>;
+type YM = { month: number; year: number };
+
+export interface AdRow {
+  date: string; // YYYY-MM-DD (IST calendar day)
+  product: string;
+  spend: number; // ex-GST, as shown in Meta Ads Manager
+}
+
+/** Money for a slice of business, all ex-GST. */
+export interface Pnl {
+  revenue: number;
+  cogs: number;
+  shipping: number;
+  gateway: number;
+  packaging: number;
+  ads: number;
+  profit: number;
+}
+
+export interface Counts {
+  orders: number;
+  units: number;
+  delivered: number;
+  rto: number;
+  cancelled: number;
+  pending: number;
+}
+
+export type ProfitStatus = "Delivered" | "Prepaid" | "RTO" | "Cancelled" | "Pending";
+
+export interface ProfitRow extends Pnl, Counts {
+  key: string; // day (YYYY-MM-DD) or product title
+  /** Profit from orders whose outcome is known (pending COD excluded), after all ads */
+  confirmedProfit: number;
+}
+
+export interface ProfitData {
+  month: number;
+  year: number;
+  deliveryRate: number; // COD orders that get delivered (0–1), used for pending COD
+  deliveryRateSample: number;
+  totals: ProfitRow;
+  days: ProfitRow[];
+  products: ProfitRow[];
+  gst: { output: number; input: number; net: number };
+  ads: { configured: boolean; error: string | null; unassigned: { product: string; spend: number }[] };
+  missingCosts: string[];
+  syncedAt: string;
+}
+
+/** What one scenario of an order costs (GST-inclusive amounts, COGS as-is). */
+interface Scenario {
+  revenueIncl: number;
+  cogs: number[]; // per line
+  freightIncl: number;
+  codIncl: number;
+  gatewayIncl: number;
+  packagingIncl: number;
+}
+
+function scenarios(o: Normalized) {
+  const cod = o.paymentType === "COD";
+  const gatewayIncl = o.total * (cod ? COSTS.gatewayPartialCod : COSTS.gatewayPrepaid);
+  const unitCosts = o.lineItems.map((l) => (unitCost(l.title, l.variantTitle) ?? 0) * l.quantity);
+  const refunded = o.financialStatus === "REFUNDED";
+  const zero = o.lineItems.map(() => 0);
+  const delivered: Scenario = {
+    revenueIncl: refunded ? 0 : o.total,
+    cogs: unitCosts,
+    freightIncl: COSTS.freight,
+    codIncl: cod ? COSTS.codCharge : 0,
+    gatewayIncl,
+    packagingIncl: COSTS.packaging,
+  };
+  // Returned to origin: goods come back to stock, but freight is paid both ways.
+  const rto: Scenario = {
+    revenueIncl: cod ? o.received : refunded ? 0 : o.total,
+    cogs: zero,
+    freightIncl: COSTS.freight * 2,
+    codIncl: 0,
+    gatewayIncl,
+    packagingIncl: COSTS.packaging,
+  };
+  // Cancelled before shipping: only the advance kept (COD) and the gateway fee.
+  const cancelled: Scenario = {
+    revenueIncl: cod ? o.received : 0,
+    cogs: zero,
+    freightIncl: 0,
+    codIncl: 0,
+    gatewayIncl,
+    packagingIncl: 0,
+  };
+  return { delivered, rto, cancelled };
+}
+
+function statusOf(o: Normalized): ProfitStatus {
+  if (o.outcome === "RTO") return "RTO";
+  if (o.outcome === "Cancelled") return "Cancelled";
+  if (o.paymentType === "COD") return o.outcome === "Delivered" ? "Delivered" : "Pending";
+  return o.outcome === "Delivered" ? "Delivered" : "Prepaid"; // prepaid: revenue is certain
+}
+
+const emptyRow = (key: string): ProfitRow => ({
+  key, revenue: 0, cogs: 0, shipping: 0, gateway: 0, packaging: 0, ads: 0, profit: 0, confirmedProfit: 0,
+  orders: 0, units: 0, delivered: 0, rto: 0, cancelled: 0, pending: 0,
+});
+
+const dayOf = (iso: string) => {
+  const { year, month, day } = istParts(iso);
+  return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+};
+const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
+
+/** Share of settled COD orders (delivered vs returned) from the last `days` days. */
+export function codDeliveryRate(orders: Normalized[], now: Date, days = 75) {
+  const from = new Date(now.getTime() - days * 864e5).toISOString();
+  const settled = orders.filter(
+    (o) => o.paymentType === "COD" && !o.isTest && o.createdAt >= from && (o.outcome === "Delivered" || o.outcome === "RTO"),
+  );
+  const delivered = settled.filter((o) => o.outcome === "Delivered").length;
+  return { rate: settled.length >= 10 ? delivered / settled.length : 0.75, sample: settled.length };
+}
+
+/**
+ * Profit for orders placed in the month, day by day and product by product.
+ * Orders count on the day they were placed (when the ad money was spent).
+ * Pending COD orders are counted at the recent delivery rate.
+ */
+export function buildProfit(
+  all: Normalized[],
+  ym: YM,
+  ads: { rows: AdRow[]; configured: boolean; error: string | null },
+  opts: { now?: Date; syncedAt?: string } = {},
+): ProfitData {
+  const now = opts.now ?? new Date();
+  const range = monthRangeUTC(ym.month, ym.year);
+  const start = range.start.toISOString();
+  const end = range.end.toISOString();
+  const { rate: p, sample } = codDeliveryRate(all, now);
+
+  const days = new Map<string, ProfitRow>();
+  const products = new Map<string, ProfitRow>();
+  const totals = emptyRow("total");
+  const gst = { output: 0, input: 0 };
+  const missing = new Set<string>();
+  const row = (map: Map<string, ProfitRow>, key: string) => {
+    if (!map.has(key)) map.set(key, emptyRow(key));
+    return map.get(key)!;
+  };
+
+  // Every day of the month up to today, so days with only ad spend still show
+  for (let t = range.start.getTime(); t < Math.min(range.end.getTime(), now.getTime()); t += 864e5) {
+    row(days, dayOf(new Date(t).toISOString()));
+  }
+
+  for (const o of all) {
+    if (o.isTest || o.createdAt < start || o.createdAt >= end || o.lineItems.length === 0) continue;
+    const status = statusOf(o);
+    const s = scenarios(o);
+    const mix: [Scenario, number][] =
+      status === "Delivered" || status === "Prepaid" ? [[s.delivered, 1]]
+      : status === "RTO" ? [[s.rto, 1]]
+      : status === "Cancelled" ? [[s.cancelled, 1]]
+      : [[s.delivered, p], [s.rto, 1 - p]];
+
+    o.lineItems.forEach((l) => {
+      if (unitCost(l.title, l.variantTitle) === null) missing.add(`${l.title}${l.variantTitle ? ` (${l.variantTitle})` : ""}`);
+    });
+
+    // Split order-level amounts across its products by line value
+    const weights = o.lineItems.map((l) => toPaise(l.discountedTotal || l.originalUnitPrice * l.quantity));
+    const share = (amount: number) => allocate(toPaise(amount), weights).map(fromPaise);
+
+    const lines = o.lineItems.map(() => ({ revenue: 0, cogs: 0, shipping: 0, gateway: 0, packaging: 0 }));
+    for (const [sc, w] of mix) {
+      const rev = share(exGst(sc.revenueIncl, GST_RATE) * w);
+      const ship = share((exGst(sc.freightIncl, COSTS.shippingGstRate) + exGst(sc.codIncl, COSTS.shippingGstRate)) * w);
+      const gw = share(exGst(sc.gatewayIncl, COSTS.gatewayGstRate) * w);
+      const pack = share(exGst(sc.packagingIncl, COSTS.packagingGstRate) * w);
+      lines.forEach((ln, i) => {
+        ln.revenue += rev[i];
+        ln.cogs += sc.cogs[i] * w;
+        ln.shipping += ship[i];
+        ln.gateway += gw[i];
+        ln.packaging += pack[i];
+      });
+      gst.output += (sc.revenueIncl - exGst(sc.revenueIncl, GST_RATE)) * w;
+      gst.input +=
+        ((sc.freightIncl + sc.codIncl) * (1 - 1 / (1 + COSTS.shippingGstRate / 100)) +
+          sc.gatewayIncl * (1 - 1 / (1 + COSTS.gatewayGstRate / 100)) +
+          sc.packagingIncl * (1 - 1 / (1 + COSTS.packagingGstRate / 100))) *
+        w;
+    }
+
+    const day = row(days, dayOf(o.createdAt));
+    const counted = new Set<ProfitRow>();
+    const addCounts = (r: ProfitRow, units: number) => {
+      r.units += units;
+      if (counted.has(r)) return;
+      counted.add(r);
+      r.orders++;
+      if (status === "Delivered" || status === "Prepaid") r.delivered++;
+      else if (status === "RTO") r.rto++;
+      else if (status === "Cancelled") r.cancelled++;
+      else r.pending++;
+    };
+    o.lineItems.forEach((l, i) => {
+      const ln = lines[i];
+      const profit = ln.revenue - ln.cogs - ln.shipping - ln.gateway - ln.packaging;
+      for (const r of [day, row(products, l.title), totals]) {
+        r.revenue += ln.revenue;
+        r.cogs += ln.cogs;
+        r.shipping += ln.shipping;
+        r.gateway += ln.gateway;
+        r.packaging += ln.packaging;
+        r.profit += profit;
+        if (status !== "Pending") r.confirmedProfit += profit;
+        addCounts(r, l.quantity);
+      }
+    });
+  }
+
+  // Ad spend: per product per day from the sheet, matched to Shopify product titles
+  const titles = [...products.keys()];
+  const unassigned = new Map<string, number>();
+  for (const a of ads.rows) {
+    if (a.date < dayOf(start) || a.date >= dayOf(end) || !a.spend) continue;
+    const key = norm(a.product);
+    const title = titles.find((t) => key && (norm(t).includes(key) || key.includes(norm(t))));
+    for (const r of [row(days, a.date), title ? products.get(title)! : null, totals]) {
+      if (!r) continue;
+      r.ads += a.spend;
+      r.profit -= a.spend;
+      r.confirmedProfit -= a.spend;
+    }
+    if (!title) unassigned.set(a.product || "(blank)", (unassigned.get(a.product || "(blank)") ?? 0) + a.spend);
+    gst.input += a.spend * (COSTS.adsGstRate / 100);
+  }
+
+  const round = (r: ProfitRow): ProfitRow => {
+    const out = { ...r };
+    for (const k of ["revenue", "cogs", "shipping", "gateway", "packaging", "ads", "profit", "confirmedProfit"] as const) {
+      out[k] = Math.round(r[k] * 100) / 100;
+    }
+    return out;
+  };
+  const r2 = (n: number) => Math.round(n * 100) / 100;
+
+  return {
+    month: ym.month,
+    year: ym.year,
+    deliveryRate: p,
+    deliveryRateSample: sample,
+    totals: round(totals),
+    days: [...days.values()].sort((a, b) => a.key.localeCompare(b.key)).map(round),
+    products: [...products.values()].sort((a, b) => b.revenue - a.revenue).map(round),
+    gst: { output: r2(gst.output), input: r2(gst.input), net: r2(gst.output - gst.input) },
+    ads: {
+      configured: ads.configured,
+      error: ads.error,
+      unassigned: [...unassigned].map(([product, spend]) => ({ product, spend })),
+    },
+    missingCosts: [...missing],
+    syncedAt: opts.syncedAt ?? now.toISOString(),
+  };
+}
