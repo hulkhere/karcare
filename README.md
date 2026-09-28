@@ -70,16 +70,19 @@ COD orders still in transit are counted at the recent COD delivery rate; **Confi
 
 ### Ad spend sheet
 
-One tab named **Ad spend**, one row per product per day:
+One tab named **Ad spend**, one row per day, one column per product:
 
-| Date | Product | Spend |
-|---|---|---|
-| 01/09/2026 | Door Shock Absorbers | 2500 |
-| 01/09/2026 | Car Door Protector | 1500 |
+| Date | Door Shock Absorbers | Car Door Protector | Total |
+|---|---|---|---|
+| 05/09/2026 | 7455 | 5533 | 12988 |
+| 06/09/2026 | 10850 | 5180 | 16030 |
 
-- **Date**: DD/MM/YYYY (2026-09-01 and "1 Sep 2026" also work).
-- **Product**: the Shopify product name, or a clear part of it ("Door Shock Absorbers", "Car Door Protector"). Unmatched names are counted in the total and flagged.
-- **Spend**: "Amount spent" from Meta Ads Manager, **without** the 18% GST. Numbers only (₹ and commas are fine).
+- **Date**: DD/MM/YYYY ("29-Aug" and "1 Sep 2026" also work).
+- **Product columns**: header = the Shopify product name, or a clear part of it. Add a column when you launch a new product. A header that matches no product is counted in the total and flagged.
+- **Values**: "Amount spent" from Meta Ads Manager, **without** the 18% GST. Blank = no spend. ₹ and commas are fine.
+- **Total**: optional (e.g. `=SUM(B2:C2)`) — the app ignores it.
+
+(A long layout — `Date | Product | Spend`, one row per product per day — is also accepted.)
 
 Publish it: File → Share → Publish to web → choose the **Ad spend** tab → **Comma-separated values (.csv)** → Publish. Copy the link into `GOOGLE_SHEET_CSV_URL` in Vercel and redeploy. Anyone with that link can read the sheet, so don't put anything else in it.
 

@@ -126,4 +126,29 @@ describe("sheet parsing", () => {
     ]);
     expect(parseDate("5-Sep-26")).toBe("2026-09-05");
   });
+
+  it("reads one column per product and ignores the Total column", () => {
+    const now = new Date("2026-09-28T00:00:00Z");
+    const csv = [
+      'Date,Door Shock Absorbers,Car Door Protector,Total',
+      '29/08/2026,4700,,4700',
+      '05/09/2026,"₹7,455","₹5,533","₹12,988"',
+      'Sep-6,10850,5180,16030',
+    ].join("\n");
+    expect(parseAdSpend(csv, now)).toEqual([
+      { date: "2026-08-29", product: "Door Shock Absorbers", spend: 4700 },
+      { date: "2026-09-05", product: "Door Shock Absorbers", spend: 7455 },
+      { date: "2026-09-05", product: "Car Door Protector", spend: 5533 },
+      { date: "2026-09-06", product: "Door Shock Absorbers", spend: 10850 },
+      { date: "2026-09-06", product: "Car Door Protector", spend: 5180 },
+    ]);
+  });
+
+  it("strips 'Ad Spend (ex GST)' from product headers and handles dates without a year", () => {
+    const now = new Date("2026-09-28T00:00:00Z");
+    const csv = 'Date,"Door Shock Absorbers Ad Spend\n(ex GST)",Car Door Protector Ad Spend (ex GST),Total Spend\n29-Aug,4700,0,4700\n';
+    expect(parseAdSpend(csv, now)).toEqual([{ date: "2026-08-29", product: "Door Shock Absorbers", spend: 4700 }]);
+    expect(parseDate("15-Jan", new Date("2026-12-20T00:00:00Z"))).toBe("2026-01-15");
+    expect(parseDate("25-Dec", new Date("2027-01-05T00:00:00Z"))).toBe("2026-12-25");
+  });
 });
