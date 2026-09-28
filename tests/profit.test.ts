@@ -94,6 +94,21 @@ describe("order economics (cash incl. GST, then GST settled)", () => {
     expect(d.totals.pending).toBe(1);
   });
 
+  it("every profit figure — final and confirmed — is after paying net GST", () => {
+    const history = Array.from({ length: 10 }, () => order({ at: "2026-08-20T06:00:00Z", cod: true, outcome: "delivered" }));
+    const settled = [
+      order({ at: "2026-09-05T06:00:00Z", outcome: "delivered" }),
+      order({ at: "2026-09-05T07:00:00Z", cod: true, outcome: "rto" }),
+    ];
+    const d = run([...history, ...settled, order({ at: "2026-09-06T06:00:00Z", cod: true, outcome: "transit" })]);
+    const s = run([...history, ...settled]).totals; // same month without the pending order
+    const afterGst = (r: typeof s) => r2(r.collected - r.cogs - r.shipping - r.gateway - r.packaging - r.ads - r.netGst);
+    expect(d.totals.profit).toBe(afterGst(d.totals));
+    expect(s.profit).toBe(afterGst(s));
+    expect(d.totals.confirmedProfit).toBe(s.profit); // confirmed = settled orders only, after GST
+    for (const row of [...d.days, ...d.products]) expect(row.profit).toBeCloseTo(afterGst(row), 1);
+  });
+
   it("ad spend per product per day from the sheet; unknown products flagged", () => {
     const ads = {
       configured: true,

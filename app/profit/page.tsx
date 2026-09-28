@@ -55,7 +55,7 @@ function Breakdown({ t }: { t: ProfitRow }) {
       <Line label="GST payable on sales" value={-t.gstOutput} base={t.collected} muted />
       <Line label="GST input credit on costs & ads" value={t.gstInput} base={t.collected} muted />
       <div className="border-t border-slate-200 pt-2">
-        <Line label="Profit in pocket (before income tax)" value={t.profit} base={t.collected} strong bar={false} />
+        <Line label="Final profit — after paying net GST" value={t.profit} base={t.collected} strong bar={false} />
       </div>
     </div>
   );
@@ -76,7 +76,7 @@ function Statement({ products, total }: { products: ProfitRow[]; total: ProfitRo
     { label: "GST payable on sales", get: (r) => -r.gstOutput, kind: "gst" },
     { label: "GST input credit (shipping, fees, packaging, ads)", get: (r) => r.gstInput, kind: "gst" },
     { label: "Net GST (− you pay · + credit left over)", get: (r) => -r.netGst, kind: "sub" },
-    { label: "Final profit (after all GST, before income tax)", get: (r) => r.profit, kind: "final" },
+    { label: "Final profit (after paying net GST)", get: (r) => r.profit, kind: "final" },
   ];
   return (
     <div className="overflow-x-auto">
@@ -175,7 +175,7 @@ function Profit() {
 
   return (
     <>
-      <PageHeader title="Profit" subtitle={`Orders placed in ${monthLabel(month, year)} — cash in and out, GST settled, profit in pocket before income tax`}>
+      <PageHeader title="Profit" subtitle={`Orders placed in ${monthLabel(month, year)} — every profit shown is after paying net GST (before income tax)`}>
         <MonthPicker month={month} year={year} onChange={setMonthYear} onRefresh={refresh} loading={loading} />
       </PageHeader>
 
@@ -201,8 +201,17 @@ function Profit() {
       {data && t && (
         <>
           <div className="grid grid-cols-2 gap-3 lg:grid-cols-6">
-            <Stat label="Profit in pocket" value={r(t.profit)} tone={t.profit < 0 ? "red" : "green"} hint={`${pct(t.profit, sales(t))} of sales ex-GST`} />
-            <Stat label="Confirmed profit" value={r(t.confirmedProfit)} hint={`${t.pending} COD still pending`} />
+            <Stat
+              label="Final profit (after GST)"
+              value={r(t.profit)}
+              tone={t.profit < 0 ? "red" : "green"}
+              hint={`${r(t.profit + t.netGst)} before GST − ${r(t.netGst)} net GST`}
+            />
+            <Stat
+              label="Confirmed profit (after GST)"
+              value={r(t.confirmedProfit)}
+              hint={`after net GST · ${t.pending} pending COD left out`}
+            />
             <Stat label="Collected" value={r(t.collected)} hint={`${t.orders} orders · ${t.units} units`} />
             <Stat label="Meta ad spend" value={r(t.adSpend)} hint={t.adSpend ? `ROAS ${(t.collected / t.adSpend).toFixed(2)}× · paid ${r(t.ads)}` : "—"} />
             <Stat
@@ -236,7 +245,7 @@ function Profit() {
                 {data.deliveryRateSample >= 10 ? ` (last ${data.deliveryRateSample} settled COD orders)` : " (default until 10 COD orders settle)"}.
                 &ldquo;Confirmed profit&rdquo; leaves them out.
               </li>
-              <li>• Profit in pocket = collected − everything paid − net GST. Only income tax is left.</li>
+              <li>• <strong>Every profit here is after paying net GST</strong>: collected − everything paid − net GST. Only income tax is left.</li>
             </ul>
           </Card>
 
@@ -262,7 +271,7 @@ function Profit() {
                     <th className={th}>GST payable</th>
                     <th className={th}>GST credit</th>
                     <th className={th}>Net GST</th>
-                    <th className={th}>Profit</th>
+                    <th className={th}>Final profit (after GST)</th>
                     <th className={th}>Margin</th>
                     <th className={th}>Per order</th>
                   </tr>
@@ -309,8 +318,8 @@ function Profit() {
                     <th className={th}>GST payable</th>
                     <th className={th}>GST credit</th>
                     <th className={th}>Net GST</th>
-                    <th className={th}>Final profit</th>
-                    <th className={th} title="Pending COD orders left out">Confirmed</th>
+                    <th className={th}>Final profit (after GST)</th>
+                    <th className={th} title="After net GST; pending COD orders left out">Confirmed (after GST)</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
