@@ -1,6 +1,6 @@
 import { formatDateNumericIST, MONTH_NAMES } from "./dates";
 import { fromPaise, toPaise } from "./gst";
-import type { ArchiveSnapshot, InvoiceData } from "./types";
+import type { InvoiceData } from "./types";
 
 function csv(rows: (string | number)[][]) {
   const cell = (v: string | number) => {
@@ -81,4 +81,4 @@ export function hsnSummaryCsv(invoices: InvoiceData[]) {
 }
 
 /** "Aug-2026" */
-export const monthTag = (s: Pick<ArchiveSnapshot, "month" | "year">) => `${MONTH_NAMES[s.month - 1].slice(0, 3)}-${s.year}`;
+export const monthTag = (s: { month: number; year: number }) => `${MONTH_NAMES[s.month - 1].slice(0, 3)}-${s.year}`;

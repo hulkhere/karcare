@@ -193,13 +193,12 @@ async function shopifyGraphQL<T>(query: string, variables: Record<string, unknow
   return json.data;
 }
 
-/** Fetch every order created in [from, to), following pagination. */
-export async function fetchOrdersCreatedBetween(from: Date, to: Date): Promise<RawOrder[]> {
-  const query = `created_at:>='${from.toISOString()}' created_at:<'${to.toISOString()}'`;
+/** Fetch every order matching a Shopify search query, following pagination. */
+async function fetchOrders(query: string): Promise<RawOrder[]> {
   const orders: RawOrder[] = [];
   let after: string | null = null;
 
-  for (let page = 0; page < 100; page++) {
+  for (let page = 0; page < 200; page++) {
     const data: {
       orders: { edges: { node: RawOrder }[]; pageInfo: { hasNextPage: boolean; endCursor: string | null } };
     } = await shopifyGraphQL(ORDERS_QUERY, { first: 25, query, after });
@@ -208,4 +207,18 @@ export async function fetchOrdersCreatedBetween(from: Date, to: Date): Promise<R
     after = data.orders.pageInfo.endCursor;
   }
   return orders;
+}
+
+const between = (from: Date, to: Date) => `created_at:>='${from.toISOString()}' created_at:<'${to.toISOString()}'`;
+
+/**
+ * Orders placed in [start, end), plus shipped COD orders placed in [lookbackFrom, start)
+ * (those can be delivered — and therefore invoiced — in this month).
+ */
+export async function fetchOrdersForMonth(start: Date, end: Date, lookbackFrom: Date, codTag: string) {
+  const [month, earlierCod] = await Promise.all([
+    fetchOrders(between(start, end)),
+    fetchOrders(`${between(lookbackFrom, start)} tag:${codTag} fulfillment_status:shipped`),
+  ]);
+  return [...month, ...earlierCod];
 }

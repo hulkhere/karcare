@@ -1,5 +1,5 @@
 import { formatDateIST } from "@/lib/dates";
-import type { Delivery, PaymentType } from "@/lib/types";
+import type { Bucket, Delivery, Order, PaymentType } from "@/lib/types";
 
 const STYLES: Record<string, { cls: string; dot: string; label?: string }> = {
   DELIVERED: { cls: "bg-green-100 text-green-800 ring-green-300", dot: "bg-green-500" },
@@ -12,6 +12,8 @@ const STYLES: Record<string, { cls: string; dot: string; label?: string }> = {
   PICKED_UP: { cls: "bg-green-100 text-green-800 ring-green-300", dot: "bg-green-500" },
 };
 const NOT_SHIPPED = { cls: "bg-slate-100 text-slate-500 ring-slate-200", dot: "bg-slate-300", label: "Not Shipped" };
+
+export const deliveryLabel = (status: string | null) => (status ? humanize(status) : "Not Shipped");
 
 const humanize = (s: string) => s.toLowerCase().replace(/_/g, " ").replace(/^\w/, (c) => c.toUpperCase());
 
@@ -48,9 +50,9 @@ export function DeliveryBadge({ delivery }: { delivery: Delivery }) {
 export function PaymentBadge({ type, status }: { type: PaymentType; status: string | null }) {
   const cls =
     type === "Prepaid"
-      ? "bg-indigo-100 text-indigo-800"
+      ? "bg-indigo-50 text-indigo-700 ring-1 ring-inset ring-indigo-200"
       : type === "COD"
-        ? "bg-amber-100 text-amber-800"
+        ? "bg-orange-50 text-orange-700 ring-1 ring-inset ring-orange-200"
         : "bg-slate-100 text-slate-600";
   return (
     <span className={`inline-block rounded px-2 py-0.5 text-xs font-medium ${cls}`} title={status ?? undefined}>
@@ -58,3 +60,31 @@ export function PaymentBadge({ type, status }: { type: PaymentType; status: stri
     </span>
   );
 }
+
+const BUCKET_STYLE: Record<Bucket, string> = {
+  invoiceable: "bg-emerald-50 text-emerald-700 ring-emerald-200",
+  pending_cod: "bg-amber-50 text-amber-700 ring-amber-200",
+  other_month: "bg-sky-50 text-sky-700 ring-sky-200",
+  skipped: "bg-slate-50 text-slate-500 ring-slate-200",
+};
+
+export const BUCKET_LABEL: Record<Bucket, string> = {
+  invoiceable: "Invoice this month",
+  pending_cod: "Awaiting delivery",
+  other_month: "Other month",
+  skipped: "Excluded",
+};
+
+export function InvoiceStatus({ order }: { order: Order }) {
+  const detail =
+    order.bucket === "skipped" ? order.reason : order.bucket === "other_month" ? order.reason.split(" — ")[1] : null;
+  return (
+    <div className="space-y-0.5">
+      <span className={`inline-block rounded-md px-2 py-0.5 text-xs font-medium ring-1 ring-inset ${BUCKET_STYLE[order.bucket]}`}>
+        {BUCKET_LABEL[order.bucket]}
+      </span>
+      {detail && <div className="text-xs text-slate-400">{detail}</div>}
+    </div>
+  );
+}
+

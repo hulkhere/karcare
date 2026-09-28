@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
-import Link from "next/link";
+import { Suspense } from "react";
+import { NavTabs } from "@/components/NavTabs";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -12,23 +13,22 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en">
       <body className="min-h-screen antialiased">
-        <header className="border-b border-slate-200 bg-white">
-          <nav className="mx-auto flex max-w-7xl items-center gap-6 px-4 py-3">
-            <span className="font-semibold">
-              KarCare <span className="font-normal text-slate-500">GST Invoices</span>
-            </span>
-            <Link href="/" className="text-sm text-slate-600 hover:text-slate-900">
-              Dashboard
-            </Link>
-            <Link href="/summary" className="text-sm text-slate-600 hover:text-slate-900">
-              GST Summary
-            </Link>
-            <Link href="/archive" className="text-sm text-slate-600 hover:text-slate-900">
-              Archive
-            </Link>
-          </nav>
+        <header className="sticky top-0 z-10 border-b border-slate-200 bg-white/90 backdrop-blur">
+          <div className="mx-auto flex max-w-7xl items-center gap-8 px-4">
+            <div className="flex items-center gap-2 py-3">
+              <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-slate-900 text-xs font-bold text-white">
+                KC
+              </span>
+              <span className="text-sm font-semibold text-slate-900">
+                KarCare <span className="font-normal text-slate-400">· GST Invoices</span>
+              </span>
+            </div>
+            <Suspense>
+              <NavTabs />
+            </Suspense>
+          </div>
         </header>
-        {children}
+        <main className="mx-auto max-w-7xl space-y-6 px-4 py-6">{children}</main>
       </body>
     </html>
   );

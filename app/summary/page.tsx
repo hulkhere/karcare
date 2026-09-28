@@ -1,8 +1,9 @@
 "use client";
 
-import { Suspense, useMemo } from "react";
+import { Suspense, useMemo, useState } from "react";
 import { MonthPicker } from "@/components/MonthPicker";
-import { DeliveryBadge, PaymentBadge } from "@/components/StatusBadge";
+import { BUCKET_LABEL, DeliveryBadge, InvoiceStatus, PaymentBadge } from "@/components/StatusBadge";
+import { Alert, Card, EmptyState, inputCls, PageHeader, Spinner, Stat } from "@/components/ui";
 import { formatDateIST, monthLabel } from "@/lib/dates";
 import { fromPaise, isIntraState, splitCgstSgst, stateCodeFor, toPaise } from "@/lib/gst";
 import { formatINR } from "@/lib/invoice";
@@ -54,58 +55,70 @@ function aggregate(orders: Order[]) {
 }
 
 const r = (paise: number) => `₹${formatINR(fromPaise(paise))}`;
-const th = "px-3 py-2 text-left text-xs uppercase tracking-wide text-slate-500";
-const td = "px-3 py-2";
+const th = "px-4 py-2.5 text-left text-xs font-medium text-slate-500";
+const td = "px-4 py-2.5";
 
 function Summary() {
-  const { month, year, setMonthYear, data, loading, error, fetchOrders } = useMonthOrders();
+  const { month, year, setMonthYear, data, loading, error, reload } = useMonthOrders();
+  const [payment, setPayment] = useState<"all" | "Prepaid" | "COD">("all");
+  const [notInvoicedFilter, setNotInvoicedFilter] = useState<"all" | "pending_cod" | "other_month" | "skipped">("all");
   const orders = useMemo(() => data?.orders ?? [], [data]);
-  const invoiceable = orders.filter((o) => o.bucket === "invoiceable");
-  const notInvoiced = orders.filter((o) => o.bucket !== "invoiceable" && !o.isTest);
+  const invoiceable = useMemo(
+    () => orders.filter((o) => o.bucket === "invoiceable" && (payment === "all" || o.paymentType === payment)),
+    [orders, payment],
+  );
+  const notInvoiced = orders.filter(
+    (o) => o.bucket !== "invoiceable" && !o.isTest && (notInvoicedFilter === "all" || o.bucket === notInvoicedFilter),
+  );
   const { states, codes, all } = useMemo(() => aggregate(invoiceable), [invoiceable]);
 
   return (
-    <main className="mx-auto max-w-7xl space-y-6 px-4 py-6">
-      <div className="flex flex-wrap items-end gap-3">
-        <MonthPicker month={month} year={year} onChange={setMonthYear} />
-        <button
-          onClick={fetchOrders}
-          disabled={loading}
-          className="rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700 disabled:opacity-50"
-        >
-          {loading ? "Fetching…" : "Fetch Orders"}
-        </button>
-        {data && <span className="text-sm text-slate-500">GST summary for {monthLabel(data.month, data.year)}</span>}
-      </div>
+    <>
+      <PageHeader title="GST Summary" subtitle={`Figures for GSTR-1 — ${monthLabel(month, year)}`}>
+        <MonthPicker month={month} year={year} onChange={setMonthYear} onRefresh={reload} loading={loading} />
+      </PageHeader>
 
-      {error && <div className="rounded-md border border-red-200 bg-red-50 p-4 text-sm text-red-700">{error}</div>}
+      {error && <Alert>Couldn&apos;t load orders: {error}</Alert>}
+      {loading && !data && (
+        <Card>
+          <div className="flex items-center justify-center gap-2 py-10 text-sm text-slate-500">
+            <Spinner /> Loading…
+          </div>
+        </Card>
+      )}
 
       {data && (
         <>
-          <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
-            {[
-              ["Invoiced orders", String(all.count)],
-              ["Taxable value", r(all.taxable)],
-              ["IGST", r(all.igst)],
-              ["CGST + SGST", `${r(all.cgst)} + ${r(all.sgst)}`],
-              ["Invoice value", r(all.total)],
-            ].map(([k, v]) => (
-              <div key={k} className="rounded-xl border border-slate-200 bg-white p-4">
-                <div className="text-xs uppercase tracking-wide text-slate-500">{k}</div>
-                <div className="mt-1 text-lg font-semibold">{v}</div>
-              </div>
+          <div className="flex flex-wrap items-center gap-2">
+            {(["all", "Prepaid", "COD"] as const).map((p) => (
+              <button
+                key={p}
+                onClick={() => setPayment(p)}
+                className={`rounded-full px-3 py-1 text-xs font-medium ${
+                  payment === p ? "bg-slate-900 text-white" : "bg-white text-slate-600 ring-1 ring-slate-200 hover:bg-slate-50"
+                }`}
+              >
+                {p === "all" ? "All payments" : p}
+              </button>
             ))}
           </div>
 
-          <section className="rounded-xl border border-slate-200 bg-white">
-            <h2 className="border-b border-slate-200 px-4 py-3 font-medium">State-wise (Place of Supply) — GSTR-1 B2C</h2>
+          <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
+            <Stat label="Invoices" value={all.count} />
+            <Stat label="Taxable value" value={r(all.taxable)} />
+            <Stat label="IGST" value={r(all.igst)} hint="other states" />
+            <Stat label="CGST + SGST" value={r(all.cgst + all.sgst)} hint={`${r(all.cgst)} + ${r(all.sgst)} · Telangana`} />
+            <Stat label="Invoice value" value={r(all.total)} tone="green" />
+          </div>
+
+          <Card title="State-wise (place of supply)" subtitle="GSTR-1 B2C, 18%" padded={false}>
             <div className="overflow-x-auto">
               <table className="min-w-full text-sm">
-                <thead className="bg-slate-50">
+                <thead className="border-b border-slate-100 bg-slate-50/70">
                   <tr>
                     <th className={th}>State</th>
                     <th className={th}>Code</th>
-                    <th className={`${th} text-right`}>Orders</th>
+                    <th className={`${th} text-right`}>Invoices</th>
                     <th className={`${th} text-right`}>Taxable</th>
                     <th className={`${th} text-right`}>IGST</th>
                     <th className={`${th} text-right`}>CGST</th>
@@ -115,35 +128,29 @@ function Summary() {
                 </thead>
                 <tbody className="divide-y divide-slate-100 tabular-nums">
                   {states.map((s) => (
-                    <tr key={s.state + s.code}>
-                      <td className={td}>{s.state}</td>
-                      <td className={td}>{s.code}</td>
+                    <tr key={s.state + s.code} className="hover:bg-slate-50/60">
+                      <td className={`${td} font-medium`}>{s.state}</td>
+                      <td className={`${td} text-slate-500`}>{s.code}</td>
                       <td className={`${td} text-right`}>{s.count}</td>
                       <td className={`${td} text-right`}>{r(s.taxable)}</td>
                       <td className={`${td} text-right`}>{r(s.igst)}</td>
                       <td className={`${td} text-right`}>{r(s.cgst)}</td>
                       <td className={`${td} text-right`}>{r(s.sgst)}</td>
-                      <td className={`${td} text-right`}>{r(s.total)}</td>
+                      <td className={`${td} text-right font-medium`}>{r(s.total)}</td>
                     </tr>
                   ))}
-                  {states.length === 0 && (
-                    <tr>
-                      <td colSpan={8} className="px-3 py-6 text-center text-slate-400">
-                        No invoiceable orders.
-                      </td>
-                    </tr>
-                  )}
                 </tbody>
               </table>
+              {states.length === 0 && <EmptyState>No invoiceable orders.</EmptyState>}
             </div>
-          </section>
+          </Card>
 
-          <section className="rounded-xl border border-slate-200 bg-white">
-            <h2 className="border-b border-slate-200 px-4 py-3 font-medium">HSN / SAC summary (18%)</h2>
+          <Card title="HSN / SAC summary" subtitle="GSTR-1 Table 12" padded={false}>
             <table className="min-w-full text-sm">
-              <thead className="bg-slate-50">
+              <thead className="border-b border-slate-100 bg-slate-50/70">
                 <tr>
                   <th className={th}>HSN/SAC</th>
+                  <th className={th}>Description</th>
                   <th className={`${th} text-right`}>Qty</th>
                   <th className={`${th} text-right`}>Taxable</th>
                   <th className={`${th} text-right`}>Tax</th>
@@ -152,7 +159,8 @@ function Summary() {
               <tbody className="divide-y divide-slate-100 tabular-nums">
                 {codes.map(([code, h]) => (
                   <tr key={code}>
-                    <td className={td}>{code}</td>
+                    <td className={`${td} font-medium`}>{code}</td>
+                    <td className={`${td} text-slate-500`}>{code === "9965" ? "Shipping charges" : "Motor vehicle parts & accessories"}</td>
                     <td className={`${td} text-right`}>{h.qty}</td>
                     <td className={`${td} text-right`}>{r(h.taxable)}</td>
                     <td className={`${td} text-right`}>{r(h.tax)}</td>
@@ -160,13 +168,28 @@ function Summary() {
                 ))}
               </tbody>
             </table>
-          </section>
+          </Card>
 
-          <section className="rounded-xl border border-slate-200 bg-white">
-            <h2 className="border-b border-slate-200 px-4 py-3 font-medium">Not invoiced ({notInvoiced.length})</h2>
+          <Card
+            title={`Not invoiced (${notInvoiced.length})`}
+            subtitle="Orders from this month that don't get an invoice"
+            padded={false}
+            actions={
+              <select
+                className={inputCls}
+                value={notInvoicedFilter}
+                onChange={(e) => setNotInvoicedFilter(e.target.value as typeof notInvoicedFilter)}
+              >
+                <option value="all">All reasons</option>
+                <option value="pending_cod">{BUCKET_LABEL.pending_cod}</option>
+                <option value="other_month">{BUCKET_LABEL.other_month}</option>
+                <option value="skipped">{BUCKET_LABEL.skipped}</option>
+              </select>
+            }
+          >
             <div className="overflow-x-auto">
               <table className="min-w-full text-sm">
-                <thead className="bg-slate-50">
+                <thead className="border-b border-slate-100 bg-slate-50/70">
                   <tr>
                     <th className={th}>Order</th>
                     <th className={th}>Date</th>
@@ -174,14 +197,14 @@ function Summary() {
                     <th className={`${th} text-right`}>Amount</th>
                     <th className={th}>Payment</th>
                     <th className={th}>Delivery</th>
-                    <th className={th}>Reason</th>
+                    <th className={th}>Why</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
                   {notInvoiced.map((o) => (
                     <tr key={o.id}>
                       <td className={`${td} font-medium`}>{o.name}</td>
-                      <td className={`${td} whitespace-nowrap`}>{formatDateIST(o.createdAt)}</td>
+                      <td className={`${td} whitespace-nowrap text-slate-600`}>{formatDateIST(o.createdAt)}</td>
                       <td className={td}>{o.address?.name ?? "—"}</td>
                       <td className={`${td} text-right tabular-nums`}>₹{formatINR(o.total)}</td>
                       <td className={td}>
@@ -190,16 +213,19 @@ function Summary() {
                       <td className={td}>
                         <DeliveryBadge delivery={o.delivery} />
                       </td>
-                      <td className={`${td} text-xs text-slate-500`}>{o.reason}</td>
+                      <td className={td}>
+                        <InvoiceStatus order={o} />
+                      </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
+              {notInvoiced.length === 0 && <EmptyState>Nothing here.</EmptyState>}
             </div>
-          </section>
+          </Card>
         </>
       )}
-    </main>
+    </>
   );
 }
 

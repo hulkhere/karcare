@@ -63,3 +63,12 @@ export function financialYear(iso: string) {
   const yy = (n: number) => String(n % 100).padStart(2, "0");
   return `${yy(startYear)}-${yy(startYear + 1)}`;
 }
+
+export function previousMonth(m: { month: number; year: number }) {
+  return m.month === 1 ? { month: 12, year: m.year - 1 } : { month: m.month - 1, year: m.year };
+}
+
+/** True once the whole month (IST) is over. */
+export function isMonthComplete(month: number, year: number, now = new Date()) {
+  return monthRangeUTC(month, year).end.getTime() <= now.getTime();
+}

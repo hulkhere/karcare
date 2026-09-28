@@ -5,7 +5,7 @@ export default async function LoginPage({
 }) {
   const { error, next } = await searchParams;
   return (
-    <main className="flex min-h-[70vh] items-center justify-center px-4">
+    <div className="flex min-h-[70vh] items-center justify-center">
       <form
         method="post"
         action="/api/login"
@@ -28,6 +28,6 @@ export default async function LoginPage({
           Sign in
         </button>
       </form>
-    </main>
+    </div>
   );
 }

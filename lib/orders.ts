@@ -22,11 +22,14 @@ import type { Address, Delivery, InvoiceData, InvoiceLine, Order, PaymentType } 
 type Range = { start: Date; end: Date };
 
 const COD_GATEWAY = /\bcod\b|cash on delivery/i;
+/** Tag Shiprocket adds to partial-prepaid COD orders */
+export const COD_TAG = "PPCOD";
 
 function paymentTypeOf(raw: RawOrder): PaymentType {
   // COD first: once the courier remits, the order may be marked PAID but it is still COD.
   if (raw.displayFinancialStatus === "PARTIALLY_PAID") return "COD";
   if (raw.paymentGatewayNames?.some((g) => COD_GATEWAY.test(g))) return "COD";
+  if (raw.tags?.includes(COD_TAG)) return "COD";
   if (raw.displayFinancialStatus === "PAID") return "Prepaid";
   return "Other";
 }

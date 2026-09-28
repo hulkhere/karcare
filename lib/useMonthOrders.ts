@@ -2,24 +2,27 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { currentMonthIST } from "./dates";
+import { currentMonthIST, previousMonth } from "./dates";
 import type { OrdersResponse } from "./types";
 
-/** Month/year kept in the URL (?month=&year=) so Dashboard and Summary stay in sync. */
-export function useMonthOrders() {
+/**
+ * Month/year kept in the URL (?month=&year=) so tabs stay in sync.
+ * Orders load automatically whenever the month changes.
+ */
+export function useMonthOrders({ defaultToPrevious = false } = {}) {
   const params = useSearchParams();
   const router = useRouter();
-  const now = currentMonthIST();
-  const [month, setMonth] = useState(Number(params.get("month")) || now.month);
-  const [year, setYear] = useState(Number(params.get("year")) || now.year);
+  const fallback = defaultToPrevious ? previousMonth(currentMonthIST()) : currentMonthIST();
+  const month = Number(params.get("month")) || fallback.month;
+  const year = Number(params.get("year")) || fallback.year;
+
   const [data, setData] = useState<OrdersResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const fetchOrders = useCallback(async () => {
+  const load = useCallback(async () => {
     setLoading(true);
     setError(null);
-    router.replace(`?month=${month}&year=${year}`, { scroll: false });
     try {
       const res = await fetch(`/api/orders?month=${month}&year=${year}`, { cache: "no-store" });
       const json = await res.json();
@@ -31,22 +34,15 @@ export function useMonthOrders() {
     } finally {
       setLoading(false);
     }
-  }, [month, year, router]);
+  }, [month, year]);
 
-  // Load once on first render
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => void fetchOrders(), []);
+  useEffect(() => {
+    void load();
+  }, [load]);
 
-  return {
-    month,
-    year,
-    setMonthYear: (m: number, y: number) => {
-      setMonth(m);
-      setYear(y);
-    },
-    data,
-    loading,
-    error,
-    fetchOrders,
-  };
+  const setMonthYear = (m: number, y: number) => router.replace(`?month=${m}&year=${y}`, { scroll: false });
+
+  // Ignore data from a previously selected month while the new one loads
+  const current = data && data.month === month && data.year === year ? data : null;
+  return { month, year, setMonthYear, data: current, loading, error, reload: load };
 }
