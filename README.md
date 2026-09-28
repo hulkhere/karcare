@@ -27,24 +27,38 @@ On Vercel, add the same variables under Project → Settings → Environment Var
 
 ## Invoice rules
 
-- **Prepaid** (`PAID`, non-COD gateway): always invoiced, dated at order creation, in the month the order was placed.
-- **COD** (`PARTIALLY_PAID`, or any order whose payment gateways include "COD"/"Cash on Delivery"): invoiced only when the fulfillment's `displayStatus` is `DELIVERED`, dated at `deliveredAt`, and in the **month of delivery**. The app also checks shipped COD orders (tag `PPCOD`) from the previous 90 days to catch ones placed earlier but delivered in the selected month.
-- **Skipped**: cancelled, voided, refunded, test orders (total < ₹50, a `test` tag, or Shopify test orders), and other payment states (pending, authorized, partially refunded, …).
-- **GST is inclusive at 18%.** Taxable value = total / 1.18. Shopify's `totalTaxSet` is used when it agrees with that (within ₹1). Telangana buyers (`TS`/`TG`) → CGST 9% + SGST 9%; everyone else → IGST 18%.
-- **Totals always match Shopify's `totalPriceSet`** (i.e. after discounts). Shipping becomes its own line (SAC 9965); the rest is allocated across products in proportion to their discounted line totals.
-- **Numbering**: `KC/{FY}/{NNN}`, assigned in order of invoice date from the first number shown on the CA Export tab (suggested automatically; 001 every April).
+An invoice is created **on the day money is received**, and every invoice gets the next number in one continuous series — `KC/{FY}/{NNNN}`, starting at 0001 in August 2026 and restarting at 0001 every 1 April. Numbers are computed automatically and can't be edited.
+
+| Situation | Invoice date | Amount |
+|---|---|---|
+| Prepaid order | order date | full order total |
+| COD delivered | delivery date | full order total (the ₹99 advance + cash collected) |
+| COD refused / returned (RTO) | date Shopify records the failed delivery | the advance received (non-refundable) |
+| COD cancelled before shipping | cancellation date | the advance received (non-refundable) |
+
+- COD orders still in transit get no invoice until one of the above happens.
+- No invoice: test orders (under ₹50, tagged "test", or Shopify test orders), prepaid orders cancelled/refunded in the same month they were placed, cancellations where nothing was received.
+- A refund or return *after* an invoice doesn't change it (the CA issues a credit note), so past numbers never shift.
+- **GST is inclusive at 18%.** Telangana buyers (`TS`/`TG`) → CGST 9% + SGST 9%; everyone else → IGST 18%. Products use HSN 8708, shipping SAC 9965, and the retained advance SAC 9997 (`FORFEIT_SAC` in `lib/constants.ts` — confirm with your CA).
+- COD orders are recognised by the "Cash on Delivery (COD)" payment method, the `PPCOD` tag, or partially-paid status.
+- Export a month a couple of days after it ends, so courier updates for its last days are in.
+
+## How data is loaded
+
+To number invoices in order, the app counts every order since the start of the series. It uses a Shopify **bulk export** (one request, no rate limits, typically 10–40 seconds), reused for 30 minutes across tabs and months; **Refresh** pulls a fresh one.
 
 ## Tabs
 
-- **Orders** – every order for the month with its delivery status and invoice status. Filter by search (order #, customer, city, AWB), invoice status, payment type, delivery status and state; click a delivery-status chip to filter.
-- **CA Export** – pick a month (defaults to last month). The standard rules below are applied automatically; one click downloads a ZIP for the CA with all invoices in one PDF, each invoice as its own PDF, the invoice register, a state-wise summary and an HSN summary (CSV). The first invoice number is suggested from the previous month's export (remembered in this browser) so numbers continue without gaps.
-- **GST Summary** – state-wise and HSN figures for GSTR-1, filterable by payment type, plus the list of orders that aren't invoiced and why.
+- **Orders** – orders placed in the month plus earlier orders paid in it, with delivery status and invoice number. Filters: search (order #, invoice #, customer, city, AWB), invoice status, payment, delivery status, state; delivery-status chips filter too.
+- **CA Export** – the standard rules with counts, the month's number range, and one button that downloads a ZIP for the CA: all invoices in one PDF, each invoice as its own PDF, invoice register, state-wise and HSN summaries (CSV).
+- **GST Summary** – state-wise and HSN totals for GSTR-1 (filter: prepaid / COD delivered / advances retained), plus orders not invoiced this month and why.
+- **Insights** – orders placed, prepaid vs COD, delivered / RTO / cancelled with RTO rate, orders per product, and GST per product.
 
 ## Structure
 
-- `app/api/orders` – fetch + classify a month's orders
-- `app/api/generate-invoices` – applies the standard rules server-side and returns numbered invoice data
-- `lib/orders.ts` – eligibility rules and invoice maths
-- `lib/export.ts` – register / state-wise / HSN CSVs
-- `components/InvoicePDF.tsx` – `@react-pdf/renderer` template; PDFs and the ZIP are built in the browser
+- `lib/orders.ts` – money-event rules, numbering (`buildMonth`) and invoice maths — pure and unit-tested
+- `lib/shopify.ts` – Shopify auth and bulk export; `lib/raw.ts` – export parsing
+- `app/api/sync` – start / poll the export; `app/api/month` – a month's orders and invoices
+- `lib/export.ts` – register / state-wise / HSN / product summaries
+- `components/InvoicePDF.tsx` – PDF template; PDFs and the ZIP are built in the browser
 - `middleware.ts` – password gate

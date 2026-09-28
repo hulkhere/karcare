@@ -2,113 +2,29 @@ import "server-only";
 
 const API_VERSION = process.env.SHOPIFY_API_VERSION || "2026-07";
 
-export const ORDERS_QUERY = /* GraphQL */ `
-  query Orders($first: Int!, $query: String!, $after: String) {
-    orders(first: $first, query: $query, after: $after, reverse: true) {
-      edges {
-        cursor
-        node {
-          id
-          name
-          createdAt
-          cancelledAt
-          test
-          displayFinancialStatus
-          displayFulfillmentStatus
-          paymentGatewayNames
-          totalPriceSet { shopMoney { amount currencyCode } }
-          totalTaxSet { shopMoney { amount } }
-          subtotalPriceSet { shopMoney { amount } }
-          totalShippingPriceSet { shopMoney { amount } }
-          shippingLines(first: 5) {
-            edges { node { title discountedPriceSet { shopMoney { amount } } } }
-          }
-          shippingAddress {
-            firstName lastName address1 address2 city province provinceCode country zip phone
-          }
-          billingAddress {
-            firstName lastName address1 address2 city province provinceCode country zip phone
-          }
-          lineItems(first: 20) {
-            edges {
-              node {
-                title
-                variantTitle
-                quantity
-                sku
-                originalUnitPriceSet { shopMoney { amount } }
-                discountedTotalSet { shopMoney { amount } }
-              }
-            }
-          }
-          fulfillments(first: 5) {
-            status
-            displayStatus
-            deliveredAt
-            inTransitAt
-            createdAt
-            trackingInfo(first: 1) { number company url }
-          }
-          tags
-        }
-      }
-      pageInfo { hasNextPage endCursor }
-    }
+import { assembleJsonl, type RawOrder } from "./raw";
+
+/** Everything the app needs per order. Runs as a Shopify bulk export (no rate limits). */
+const bulkOrdersQuery = (from: Date, to: Date) => `{
+  orders(query: "created_at:>='${from.toISOString()}' created_at:<'${to.toISOString()}'") {
+    edges { node {
+      id name createdAt cancelledAt test displayFinancialStatus paymentGatewayNames tags
+      totalPriceSet { shopMoney { amount } }
+      totalTaxSet { shopMoney { amount } }
+      totalReceivedSet { shopMoney { amount } }
+      shippingAddress { firstName lastName city province provinceCode }
+      billingAddress { firstName lastName city province provinceCode }
+      refunds { createdAt }
+      transactions { kind status gateway amountSet { shopMoney { amount } } }
+      shippingLines { edges { node { id discountedPriceSet { shopMoney { amount } } } } }
+      lineItems { edges { node { id title variantTitle quantity sku
+        originalUnitPriceSet { shopMoney { amount } } discountedTotalSet { shopMoney { amount } } } } }
+      fulfillments { id status displayStatus deliveredAt updatedAt createdAt
+        trackingInfo { number company url }
+        events { edges { node { id status happenedAt } } } }
+    } }
   }
-`;
-
-type Money = { shopMoney: { amount: string } };
-type RawAddress = {
-  firstName: string | null;
-  lastName: string | null;
-  address1: string | null;
-  address2: string | null;
-  city: string | null;
-  province: string | null;
-  provinceCode: string | null;
-  country: string | null;
-  zip: string | null;
-  phone: string | null;
-} | null;
-
-export interface RawOrder {
-  id: string;
-  name: string;
-  createdAt: string;
-  cancelledAt: string | null;
-  test: boolean;
-  displayFinancialStatus: string | null;
-  displayFulfillmentStatus: string | null;
-  paymentGatewayNames: string[];
-  totalPriceSet: Money;
-  totalTaxSet: Money | null;
-  subtotalPriceSet: Money | null;
-  totalShippingPriceSet: Money | null;
-  shippingLines: { edges: { node: { title: string; discountedPriceSet: Money } }[] };
-  shippingAddress: RawAddress;
-  billingAddress: RawAddress;
-  lineItems: {
-    edges: {
-      node: {
-        title: string;
-        variantTitle: string | null;
-        quantity: number;
-        sku: string | null;
-        originalUnitPriceSet: Money;
-        discountedTotalSet: Money;
-      };
-    }[];
-  };
-  fulfillments: {
-    status: string;
-    displayStatus: string | null;
-    deliveredAt: string | null;
-    inTransitAt: string | null;
-    createdAt: string;
-    trackingInfo: { number: string | null; company: string | null; url: string | null }[];
-  }[];
-  tags: string[];
-}
+}`;
 
 function store() {
   const s = process.env.SHOPIFY_STORE;
@@ -193,32 +109,40 @@ async function shopifyGraphQL<T>(query: string, variables: Record<string, unknow
   return json.data;
 }
 
-/** Fetch every order matching a Shopify search query, following pagination. */
-async function fetchOrders(query: string): Promise<RawOrder[]> {
-  const orders: RawOrder[] = [];
-  let after: string | null = null;
-
-  for (let page = 0; page < 200; page++) {
-    const data: {
-      orders: { edges: { node: RawOrder }[]; pageInfo: { hasNextPage: boolean; endCursor: string | null } };
-    } = await shopifyGraphQL(ORDERS_QUERY, { first: 25, query, after });
-    orders.push(...data.orders.edges.map((e) => e.node));
-    if (!data.orders.pageInfo.hasNextPage) break;
-    after = data.orders.pageInfo.endCursor;
-  }
-  return orders;
+export interface BulkStatus {
+  id: string;
+  status: string; // CREATED | RUNNING | COMPLETED | FAILED | CANCELED | EXPIRED …
+  errorCode: string | null;
+  objectCount: number;
+  url: string | null;
 }
 
-const between = (from: Date, to: Date) => `created_at:>='${from.toISOString()}' created_at:<'${to.toISOString()}'`;
+/** Start a bulk export of orders created in [from, to). Returns the operation id. */
+export async function startOrdersExport(from: Date, to: Date): Promise<string> {
+  const data = await shopifyGraphQL<{
+    bulkOperationRunQuery: { bulkOperation: { id: string } | null; userErrors: { message: string }[] };
+  }>(
+    `mutation Run($q: String!) { bulkOperationRunQuery(query: $q) { bulkOperation { id status } userErrors { field message } } }`,
+    { q: bulkOrdersQuery(from, to) },
+  );
+  const { bulkOperation, userErrors } = data.bulkOperationRunQuery;
+  if (!bulkOperation) throw new Error(userErrors.map((e) => e.message).join("; ") || "Couldn't start the export");
+  return bulkOperation.id;
+}
 
-/**
- * Orders placed in [start, end), plus shipped COD orders placed in [lookbackFrom, start)
- * (those can be delivered — and therefore invoiced — in this month).
- */
-export async function fetchOrdersForMonth(start: Date, end: Date, lookbackFrom: Date, codTag: string) {
-  const [month, earlierCod] = await Promise.all([
-    fetchOrders(between(start, end)),
-    fetchOrders(`${between(lookbackFrom, start)} tag:${codTag} fulfillment_status:shipped`),
-  ]);
-  return [...month, ...earlierCod];
+export async function exportStatus(id: string): Promise<BulkStatus> {
+  const data = await shopifyGraphQL<{ node: (Omit<BulkStatus, "objectCount"> & { objectCount: string }) | null }>(
+    `query Poll($id: ID!) { node(id: $id) { ... on BulkOperation { id status errorCode objectCount url } } }`,
+    { id },
+  );
+  if (!data.node) throw new Error("Export not found");
+  return { ...data.node, objectCount: Number(data.node.objectCount) };
+}
+
+/** Download a finished export and put child rows (line items, events…) back under their parents. */
+export async function downloadOrders(url: string | null): Promise<RawOrder[]> {
+  if (!url) return []; // an export with no matching orders has no file
+  const res = await fetch(url, { cache: "no-store" });
+  if (!res.ok) throw new Error(`Couldn't download the export (${res.status})`);
+  return assembleJsonl(await res.text());
 }

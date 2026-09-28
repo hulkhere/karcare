@@ -2,7 +2,7 @@ import { INVOICE_PREFIX } from "./constants";
 import { financialYear } from "./dates";
 
 export function invoiceNumber(invoiceDateIso: string, seq: number) {
-  return `${INVOICE_PREFIX}/${financialYear(invoiceDateIso)}/${String(seq).padStart(3, "0")}`;
+  return `${INVOICE_PREFIX}/${financialYear(invoiceDateIso)}/${String(seq).padStart(4, "0")}`;
 }
 
 /** KC/26-27/001 → KC-26-27-001.pdf */

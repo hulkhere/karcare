@@ -2,172 +2,199 @@ import { describe, expect, it } from "vitest";
 import { financialYear, formatDateIST, monthRangeUTC } from "../lib/dates";
 import { allocate, isIntraState, splitCgstSgst, splitInclusive, stateCodeFor } from "../lib/gst";
 import { amountInWords, invoiceFileName, invoiceNumber } from "../lib/invoice";
-import { buildInvoice, classify, normalize, sortForInvoicing } from "../lib/orders";
-import type { RawOrder } from "../lib/shopify";
+import { buildMonth, normalize } from "../lib/orders";
+import { assembleJsonl, type RawOrder } from "../lib/raw";
 
-const money = (a: number | string) => ({ shopMoney: { amount: String(a), currencyCode: "INR" } });
+const m = (a: number) => ({ shopMoney: { amount: String(a) } });
+let n = 1000;
 
-function raw(over: Partial<RawOrder> & { total?: number; shippingAmt?: number; province?: string } = {}): RawOrder {
-  const { total = 699, shippingAmt = 0, province = "KA", ...rest } = over;
+type Opts = {
+  at: string; // created
+  cod?: boolean;
+  total?: number;
+  delivered?: string;
+  failed?: string; // RTO date
+  cancelled?: string;
+  shipped?: boolean;
+  status?: string;
+  province?: string;
+  ship?: number;
+  refunded?: string;
+  test?: boolean;
+};
+
+function order(o: Opts): RawOrder {
+  n++;
+  const total = o.total ?? 699;
+  const received = o.cod ? (o.delivered ? total : 99) : o.refunded ? 0 : total;
+  const status = o.delivered ? "DELIVERED" : o.failed ? "NOT_DELIVERED" : o.status ?? (o.shipped ? "IN_TRANSIT" : null);
   return {
-    id: "gid://shopify/Order/1",
-    name: "#1004",
-    createdAt: "2026-08-05T06:00:00Z",
-    cancelledAt: null,
-    test: false,
-    displayFinancialStatus: "PAID",
-    displayFulfillmentStatus: "FULFILLED",
-    paymentGatewayNames: ["Razorpay"],
-    totalPriceSet: money(total),
-    totalTaxSet: money(0),
-    subtotalPriceSet: money(total - shippingAmt),
-    totalShippingPriceSet: money(shippingAmt),
-    shippingLines: {
-      edges: shippingAmt ? [{ node: { title: "Standard", discountedPriceSet: money(shippingAmt) } }] : [],
-    },
-    shippingAddress: {
-      firstName: "Ravi", lastName: "Kumar", address1: "1 MG Road", address2: null, city: "Bengaluru",
-      province: "Karnataka", provinceCode: province, country: "India", zip: "560001", phone: "9999999999",
-    },
+    id: `gid://shopify/Order/${n}`, name: `#${n}`, createdAt: o.at, cancelledAt: o.cancelled ?? null, test: !!o.test,
+    displayFinancialStatus: o.refunded ? "REFUNDED" : o.cod && !o.delivered ? "PARTIALLY_PAID" : "PAID",
+    paymentGatewayNames: o.cod ? ["Cash on Delivery (COD)", "PayU"] : ["PayU"], tags: o.cod ? ["PPCOD"] : [],
+    totalPriceSet: m(total), totalTaxSet: m(0), totalReceivedSet: m(received),
+    shippingAddress: { firstName: "Ravi", lastName: "Kumar", city: "Pune", province: o.province === "TS" ? "Telangana" : "Maharashtra", provinceCode: o.province ?? "MH" },
     billingAddress: null,
-    lineItems: {
-      edges: [{
-        node: {
-          title: "Seat Cover", variantTitle: "Black", quantity: 1, sku: "SC1",
-          originalUnitPriceSet: money(total - shippingAmt), discountedTotalSet: money(total - shippingAmt),
-        },
-      }],
-    },
-    fulfillments: [],
-    tags: [],
-    ...rest,
+    refunds: o.refunded ? [{ createdAt: o.refunded }] : [],
+    transactions: [{ kind: "SALE", status: "SUCCESS", gateway: "PayU", amountSet: m(o.cod ? 99 : total) }],
+    shippingLines: o.ship ? [{ discountedPriceSet: m(o.ship) }] : [],
+    lineItems: [{ title: "Door Shock Absorbers", variantTitle: "16 Piece", quantity: 1, sku: null, originalUnitPriceSet: m(total - (o.ship ?? 0)), discountedTotalSet: m(total - (o.ship ?? 0)) }],
+    fulfillments: status
+      ? [{ id: `gid://shopify/Fulfillment/${n}`, status: "SUCCESS", displayStatus: status, deliveredAt: o.delivered ?? null, updatedAt: o.failed ?? o.delivered ?? o.at, createdAt: o.at, trackingInfo: [], events: o.failed ? [{ status: "FAILURE", happenedAt: o.failed }] : [] }]
+      : [],
   };
 }
 
-const AUG = monthRangeUTC(8, 2026);
+const AUG = { month: 8, year: 2026 };
+const SEP = { month: 9, year: 2026 };
+const numbers = (md: ReturnType<typeof buildMonth>) => md.invoices.map((i) => [i.orderName, i.number, i.kind]);
 
-describe("dates", () => {
-  it("converts IST month boundaries to UTC", () => {
-    expect(AUG.start.toISOString()).toBe("2026-07-31T18:30:00.000Z");
-    expect(AUG.end.toISOString()).toBe("2026-08-31T18:30:00.000Z");
-  });
-  it("formats in IST and computes financial year", () => {
+describe("helpers", () => {
+  it("IST dates and financial year", () => {
+    expect(monthRangeUTC(8, 2026).start.toISOString()).toBe("2026-07-31T18:30:00.000Z");
     expect(formatDateIST("2026-07-31T19:00:00Z")).toBe("01 Aug 2026");
-    expect(financialYear("2026-08-10T00:00:00Z")).toBe("26-27");
-    expect(financialYear("2027-03-31T18:00:00Z")).toBe("26-27");
-    expect(financialYear("2027-03-31T18:30:00Z")).toBe("27-28"); // 1 Apr IST
+    expect(financialYear("2027-03-31T18:30:00Z")).toBe("27-28");
   });
-});
-
-describe("gst", () => {
-  it("back-calculates 18% inclusive", () => {
+  it("GST maths", () => {
     expect(splitInclusive(69900)).toEqual({ taxable: 59237, tax: 10663, source: "computed" });
-    expect(splitInclusive(69900, 10663).source).toBe("shopify");
-    expect(splitInclusive(69900, 5000).source).toBe("computed"); // implausible Shopify tax ignored
-  });
-  it("splits CGST/SGST", () => {
     expect(splitCgstSgst(10663)).toEqual({ cgst: 5332, sgst: 5331 });
-  });
-  it("handles Telangana codes", () => {
-    expect(isIntraState("TS")).toBe(true);
     expect(isIntraState("TG")).toBe(true);
-    expect(isIntraState("KA")).toBe(false);
-    expect(stateCodeFor("TG")).toBe("36");
     expect(stateCodeFor("MH")).toBe("27");
+    expect(allocate(10000, [1, 1, 1]).reduce((a, b) => a + b)).toBe(10000);
   });
-  it("allocates exactly", () => {
-    const parts = allocate(10000, [1, 1, 1]);
-    expect(parts.reduce((a, b) => a + b)).toBe(10000);
-  });
-});
-
-describe("invoice helpers", () => {
-  it("numbers and names invoices", () => {
-    expect(invoiceNumber("2026-08-05T06:00:00Z", 1)).toBe("KC/26-27/001");
-    expect(invoiceFileName("KC/26-27/001")).toBe("KC-26-27-001.pdf");
-  });
-  it("writes amounts in words (Indian system)", () => {
+  it("numbers and words", () => {
+    expect(invoiceNumber("2026-08-05T06:00:00Z", 1)).toBe("KC/26-27/0001");
+    expect(invoiceFileName("KC/26-27/0001")).toBe("KC-26-27-0001.pdf");
     expect(amountInWords(69900)).toBe("Rupees Six Hundred and Ninety Nine Only");
-    expect(amountInWords(12345650)).toBe("Rupees One Lakh Twenty Three Thousand Four Hundred and Fifty Six and Fifty Paise Only");
+    expect(amountInWords(9900)).toBe("Rupees Ninety Nine Only");
   });
 });
 
-describe("classification", () => {
-  it("prepaid orders are always invoiceable, dated at order creation", () => {
-    const o = classify(normalize(raw()), AUG)!;
-    expect(o.bucket).toBe("invoiceable");
-    expect(o.invoiceDate).toBe("2026-08-05T06:00:00Z");
+describe("invoice numbering follows when money is received", () => {
+  it("COD is skipped until delivery, then numbered on its delivery date", () => {
+    n = 1000;
+    const orders: RawOrder[] = [];
+    for (let d = 1; d <= 9; d++) orders.push(order({ at: `2026-08-${String(d).padStart(2, "0")}T06:00:00Z` }));
+    orders.push(order({ at: "2026-08-10T06:00:00Z", cod: true, delivered: "2026-08-20T09:00:00Z" })); // #1010
+    for (let d = 11; d <= 25; d++) orders.push(order({ at: `2026-08-${d}T06:00:00Z` }));
+
+    const aug = buildMonth(orders, AUG);
+    const inv = aug.invoices;
+    expect(inv[0].number).toBe("KC/26-27/0001");
+    expect(inv.find((i) => i.orderName === "#1010")!.number).toBe("KC/26-27/0020"); // after the 19 prepaid orders paid before it was delivered
+    expect(inv.find((i) => i.orderName === "#1010")!.date).toBe("2026-08-20T09:00:00Z");
+    expect(inv.find((i) => i.orderName === "#1011")!.number).toBe("KC/26-27/0010");
+    expect(inv.at(-1)!.number).toBe("KC/26-27/0025");
+    // gap-free, strictly increasing by date
+    inv.forEach((x, i) => expect(x.number).toBe(invoiceNumber(x.date, i + 1)));
+    for (let i = 1; i < inv.length; i++) expect(inv[i].date >= inv[i - 1].date).toBe(true);
   });
 
-  it("COD needs DELIVERED, and is invoiced in the delivery month", () => {
-    const cod = (status: string | null, deliveredAt: string | null, createdAt = "2026-08-30T06:00:00Z") =>
-      raw({
-        createdAt,
-        displayFinancialStatus: "PARTIALLY_PAID",
-        fulfillments: status
-          ? [{ status: "SUCCESS", displayStatus: status, deliveredAt, inTransitAt: null, createdAt, trackingInfo: [] }]
-          : [],
-      });
-
-    expect(classify(normalize(cod("IN_TRANSIT", null)), AUG)!.bucket).toBe("pending_cod");
-    expect(classify(normalize(cod(null, null)), AUG)!.bucket).toBe("pending_cod");
-
-    // Placed Aug 30, delivered Sep 3 → not August's invoice
-    const lateDelivery = normalize(cod("DELIVERED", "2026-09-03T06:00:00Z"));
-    expect(classify(lateDelivery, AUG)!.bucket).toBe("other_month");
-    const sep = classify(lateDelivery, monthRangeUTC(9, 2026))!;
-    expect(sep.bucket).toBe("invoiceable");
-    expect(sep.invoiceDate).toBe("2026-09-03T06:00:00Z");
-
-    // Placed in July, not delivered in August → irrelevant to August
-    expect(classify(normalize(cod("IN_TRANSIT", null, "2026-07-20T06:00:00Z")), AUG)).toBeNull();
+  it("refused COD: ₹99 advance invoiced on the refusal date, in sequence", () => {
+    n = 2000;
+    const orders = [
+      order({ at: "2026-09-10T06:00:00Z" }),
+      order({ at: "2026-09-11T06:00:00Z", cod: true, failed: "2026-09-17T08:00:00Z" }), // paid 99 on 11th, RTO on 17th
+      order({ at: "2026-09-15T06:00:00Z" }),
+      order({ at: "2026-09-18T06:00:00Z" }),
+    ];
+    const sep = buildMonth(orders, SEP);
+    expect(numbers(sep)).toEqual([
+      ["#2001", "KC/26-27/0001", "sale"],
+      ["#2003", "KC/26-27/0002", "sale"],
+      ["#2002", "KC/26-27/0003", "forfeit"],
+      ["#2004", "KC/26-27/0004", "sale"],
+    ]);
+    const f = sep.invoices[2];
+    expect(f.date).toBe("2026-09-17T08:00:00Z");
+    expect(f.total).toBe(99);
+    expect(f.taxable).toBe(83.9);
+    expect(f.igst).toBe(15.1);
+    expect(f.lines[0].code).toBe("9997");
+    expect(f.lines[0].description).toContain("Non-refundable advance");
+    expect(sep.orders.find((o) => o.name === "#2002")!.outcome).toBe("RTO");
   });
 
-  it("COD marked PAID after remittance is still COD", () => {
-    const o = normalize(raw({ paymentGatewayNames: ["Razorpay", "Cash on Delivery (COD)"] }));
-    expect(o.paymentType).toBe("COD");
+  it("COD cancelled before shipping: advance invoiced on cancel date", () => {
+    n = 3000;
+    const md = buildMonth([order({ at: "2026-08-28T10:00:00Z", cod: true, cancelled: "2026-08-28T19:30:00Z" })], AUG);
+    expect(md.invoices).toHaveLength(1);
+    expect(md.invoices[0].kind).toBe("forfeit");
+    expect(md.invoices[0].date).toBe("2026-08-28T19:30:00Z");
+    expect(md.orders[0].outcome).toBe("Cancelled");
   });
 
-  it("skips test, cancelled, refunded and voided orders", () => {
-    expect(classify(normalize(raw({ total: 9.98 })), AUG)!.reason).toBe("Test order");
-    expect(classify(normalize(raw({ tags: ["Test-Order"] })), AUG)!.bucket).toBe("skipped");
-    expect(classify(normalize(raw({ displayFinancialStatus: "REFUNDED" })), AUG)!.bucket).toBe("skipped");
-    expect(classify(normalize(raw({ displayFinancialStatus: "VOIDED" })), AUG)!.bucket).toBe("skipped");
-    expect(classify(normalize(raw({ cancelledAt: "2026-08-06T00:00:00Z" })), AUG)!.bucket).toBe("skipped");
-  });
-});
-
-describe("buildInvoice", () => {
-  it("inter-state: IGST, totals match", () => {
-    const inv = buildInvoice(classify(normalize(raw()), AUG)!, 1);
-    expect(inv.intraState).toBe(false);
-    expect(inv.taxable).toBe(592.37);
-    expect(inv.igst).toBe(106.63);
-    expect(inv.total).toBe(699);
-    expect(inv.placeOfSupply).toEqual({ state: "Karnataka", code: "29" });
+  it("COD in transit stays pending; shown in its order month but not numbered", () => {
+    n = 4000;
+    const md = buildMonth([order({ at: "2026-08-28T10:00:00Z", cod: true, shipped: true }), order({ at: "2026-08-29T10:00:00Z" })], AUG);
+    expect(md.orders.find((o) => o.name === "#4001")!.bucket).toBe("pending_cod");
+    expect(md.invoices.map((i) => i.number)).toEqual(["KC/26-27/0001"]);
   });
 
-  it("intra-state with shipping line: CGST+SGST and rows sum to taxable", () => {
-    const inv = buildInvoice(classify(normalize(raw({ total: 798, shippingAmt: 99, province: "TS" })), AUG)!, 2);
-    expect(inv.intraState).toBe(true);
+  it("numbers continue across months; placed-in-Aug, delivered-in-Sep belongs to September", () => {
+    n = 5000;
+    const orders = [
+      order({ at: "2026-08-20T06:00:00Z" }),
+      order({ at: "2026-08-30T06:00:00Z", cod: true, delivered: "2026-09-03T06:00:00Z" }),
+      order({ at: "2026-08-31T06:00:00Z" }),
+      order({ at: "2026-09-02T06:00:00Z" }),
+    ];
+    const aug = buildMonth(orders, AUG);
+    const sep = buildMonth(orders, SEP);
+    expect(numbers(aug)).toEqual([["#5001", "KC/26-27/0001", "sale"], ["#5003", "KC/26-27/0002", "sale"]]);
+    expect(numbers(sep)).toEqual([["#5004", "KC/26-27/0003", "sale"], ["#5002", "KC/26-27/0004", "sale"]]);
+    expect(aug.orders.find((o) => o.name === "#5002")!.bucket).toBe("other_month");
+    expect(sep.orders.find((o) => o.name === "#5002")!.invoiceNumber).toBe("KC/26-27/0004");
+    expect(sep.series).toMatchObject({ firstNumber: 3, lastNumber: 4 });
+  });
+
+  it("restarts at 0001 on 1 April", () => {
+    n = 6000;
+    const orders = [order({ at: "2027-03-30T06:00:00Z" }), order({ at: "2027-04-01T06:00:00Z" })];
+    expect(buildMonth(orders, { month: 3, year: 2027 }).invoices[0].number).toBe("KC/26-27/0001");
+    expect(buildMonth(orders, { month: 4, year: 2027 }).invoices[0].number).toBe("KC/27-28/0001");
+  });
+
+  it("prepaid cancelled in its own month is never invoiced; refunded later keeps its invoice", () => {
+    n = 7000;
+    const orders = [
+      order({ at: "2026-08-05T06:00:00Z", cancelled: "2026-08-06T06:00:00Z", refunded: "2026-08-06T06:00:00Z" }),
+      order({ at: "2026-08-07T06:00:00Z", cancelled: "2026-09-10T06:00:00Z", refunded: "2026-09-10T06:00:00Z" }),
+      order({ at: "2026-08-08T06:00:00Z", total: 9.98 }),
+    ];
+    const aug = buildMonth(orders, AUG);
+    expect(numbers(aug)).toEqual([["#7002", "KC/26-27/0001", "sale"]]);
+    expect(aug.orders.find((o) => o.name === "#7003")!.reason).toBe("Test order");
+  });
+
+  it("delivered COD invoice shows the advance / cash split; intra-state splits CGST+SGST", () => {
+    n = 8000;
+    const inv = buildMonth([order({ at: "2026-08-10T06:00:00Z", cod: true, delivered: "2026-08-12T06:00:00Z", total: 798, ship: 99, province: "TS" })], AUG).invoices[0];
+    expect(inv.paymentNote).toBe("₹99.00 advance paid online + ₹699.00 collected on delivery");
     expect(inv.lines.map((l) => l.code)).toEqual(["8708", "9965"]);
-    const rowSum = Math.round(inv.lines.reduce((s, l) => s + l.taxable, 0) * 100);
-    expect(rowSum).toBe(Math.round(inv.taxable * 100));
     expect(Math.round((inv.taxable + inv.cgst + inv.sgst) * 100)).toBe(79800);
     expect(inv.igst).toBe(0);
   });
 
-  it("uses the discounted total, not the original price", () => {
-    const r = raw({ total: 599 });
-    r.lineItems.edges[0].node.originalUnitPriceSet = money(699);
-    const inv = buildInvoice(classify(normalize(r), AUG)!, 1);
-    expect(inv.total).toBe(599);
-    expect(inv.lines[0].rate).toBe(599);
+  it("uses Shopify's RTO event date, falling back to the fulfillment update", () => {
+    n = 9000;
+    const r = order({ at: "2026-09-11T06:00:00Z", cod: true, failed: "2026-09-17T08:00:00Z" });
+    r.fulfillments[0].events = [];
+    expect(normalize(r).event!.date).toBe("2026-09-17T08:00:00Z");
   });
+});
 
-  it("sorts by invoice date then order number", () => {
-    const a = classify(normalize(raw({ name: "#1010", createdAt: "2026-08-02T00:00:00Z" })), AUG)!;
-    const b = classify(normalize(raw({ name: "#1005", createdAt: "2026-08-09T00:00:00Z" })), AUG)!;
-    expect(sortForInvoicing([b, a]).map((o) => o.name)).toEqual(["#1010", "#1005"]);
+describe("bulk export parsing", () => {
+  it("puts child rows back under their parents", () => {
+    const jsonl = [
+      JSON.stringify({ id: "gid://shopify/Order/1", name: "#1", fulfillments: [{ id: "gid://shopify/Fulfillment/9", displayStatus: "DELIVERED" }] }),
+      JSON.stringify({ id: "gid://shopify/LineItem/5", title: "Cover", __parentId: "gid://shopify/Order/1" }),
+      JSON.stringify({ id: "gid://shopify/ShippingLine/6", __parentId: "gid://shopify/Order/1" }),
+      JSON.stringify({ id: "gid://shopify/FulfillmentEvent/7", status: "DELIVERED", __parentId: "gid://shopify/Fulfillment/9" }),
+    ].join("\n");
+    const [o] = assembleJsonl(jsonl);
+    expect(o.lineItems).toHaveLength(1);
+    expect(o.shippingLines).toHaveLength(1);
+    expect(o.fulfillments[0].events[0].status).toBe("DELIVERED");
   });
 });

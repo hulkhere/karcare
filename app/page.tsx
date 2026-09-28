@@ -4,25 +4,27 @@ import { Suspense, useMemo, useState } from "react";
 import { MonthPicker } from "@/components/MonthPicker";
 import { OrdersTable } from "@/components/OrdersTable";
 import { BUCKET_LABEL, deliveryLabel } from "@/components/StatusBadge";
-import { Alert, Card, inputCls, PageHeader, Select, Spinner, Stat } from "@/components/ui";
-import { monthLabel } from "@/lib/dates";
+import { LoadState } from "@/components/LoadState";
+import { Card, inputCls, PageHeader, Select, Stat } from "@/components/ui";
+import { monthLabel, monthRangeUTC } from "@/lib/dates";
 import { formatINR } from "@/lib/invoice";
 import type { Bucket } from "@/lib/types";
-import { useMonthOrders } from "@/lib/useMonthOrders";
+import { useMonthData } from "@/lib/useMonthData";
 
-const DELIVERY_ORDER = ["DELIVERED", "OUT_FOR_DELIVERY", "IN_TRANSIT", "ATTEMPTED_DELIVERY", "FAILURE", "CONFIRMED", "NONE"];
+const DELIVERY_ORDER = ["DELIVERED", "OUT_FOR_DELIVERY", "IN_TRANSIT", "ATTEMPTED_DELIVERY", "NOT_DELIVERED", "FAILURE", "CONFIRMED", "NONE"];
 const DOT: Record<string, string> = {
   DELIVERED: "bg-emerald-500",
   OUT_FOR_DELIVERY: "bg-orange-500",
   IN_TRANSIT: "bg-yellow-400",
   ATTEMPTED_DELIVERY: "bg-rose-500",
   FAILURE: "bg-rose-500",
+  NOT_DELIVERED: "bg-rose-600",
   CONFIRMED: "bg-slate-400",
   NONE: "bg-slate-300",
 };
 
 function Orders() {
-  const { month, year, setMonthYear, data, loading, error, reload } = useMonthOrders();
+  const { month, year, setMonthYear, data, phase, progress, loading, error, refresh } = useMonthData();
   const [search, setSearch] = useState("");
   const [payment, setPayment] = useState<"all" | "Prepaid" | "COD">("all");
   const [delivery, setDelivery] = useState("all");
@@ -30,8 +32,10 @@ function Orders() {
   const [bucket, setBucket] = useState<"all" | Bucket>("all");
 
   const orders = useMemo(() => data?.orders ?? [], [data]);
+  const range = monthRangeUTC(month, year);
+  const placed = orders.filter((o) => !o.isTest && new Date(o.createdAt) >= range.start);
   const real = orders.filter((o) => !o.isTest);
-  const invoiceable = orders.filter((o) => o.bucket === "invoiceable");
+  const invoices = data?.invoices ?? [];
 
   const deliveryCounts = useMemo(() => {
     const c = new Map<string, number>();
@@ -54,7 +58,7 @@ function Orders() {
     if (bucket !== "all" && o.bucket !== bucket) return false;
     if (search) {
       const q = search.toLowerCase();
-      const hay = `${o.name} ${o.address?.name ?? ""} ${o.address?.city ?? ""} ${o.delivery.tracking?.number ?? ""}`.toLowerCase();
+      const hay = `${o.name} ${o.address?.name ?? ""} ${o.address?.city ?? ""} ${o.delivery.tracking?.number ?? ""} ${o.invoiceNumber ?? ""}`.toLowerCase();
       if (!hay.includes(q)) return false;
     }
     return true;
@@ -63,27 +67,28 @@ function Orders() {
 
   return (
     <>
-      <PageHeader title="Orders" subtitle="Delivery status of every order, and whether it gets an invoice this month.">
-        <MonthPicker month={month} year={year} onChange={setMonthYear} onRefresh={reload} loading={loading} />
+      <PageHeader
+        title="Orders"
+        subtitle="Orders placed this month plus earlier orders paid this month — with delivery status and invoice number."
+      >
+        <MonthPicker month={month} year={year} onChange={setMonthYear} onRefresh={refresh} loading={loading} />
       </PageHeader>
 
-      {error && <Alert>Couldn&apos;t load orders: {error}</Alert>}
-      {loading && !data && (
-        <Card>
-          <div className="flex items-center justify-center gap-2 py-10 text-sm text-slate-500">
-            <Spinner /> Loading {monthLabel(month, year)} from Shopify…
-          </div>
-        </Card>
-      )}
+      <LoadState phase={phase} progress={progress} error={error} month={month} year={year} onRetry={refresh} hasData={!!data} />
 
       {data && (
         <>
           <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
-            <Stat label="Orders" value={real.length} hint={monthLabel(month, year)} />
-            <Stat label="Invoiceable" value={invoiceable.length} tone="green" hint="prepaid + COD delivered" />
+            <Stat label="Orders placed" value={placed.length} hint={monthLabel(month, year)} />
+            <Stat
+              label="Invoices this month"
+              value={invoices.length}
+              tone="green"
+              hint={data.series.firstNumber ? `No. ${data.series.firstNumber} – ${data.series.lastNumber}` : "none yet"}
+            />
             <Stat label="COD awaiting delivery" value={orders.filter((o) => o.bucket === "pending_cod").length} tone="amber" />
-            <Stat label="Invoice value" value={`₹${formatINR(invoiceable.reduce((s, o) => s + o.total, 0))}`} />
-            <Stat label="GST" value={`₹${formatINR(invoiceable.reduce((s, o) => s + o.tax, 0))}`} />
+            <Stat label="Invoice value" value={`₹${formatINR(invoices.reduce((s, i) => s + i.total, 0))}`} />
+            <Stat label="GST" value={`₹${formatINR(invoices.reduce((s, i) => s + i.igst + i.cgst + i.sgst, 0))}`} />
           </div>
 
           <Card title="Delivery status" subtitle="Click a status to filter the table">
@@ -112,7 +117,7 @@ function Orders() {
                 Search
                 <input
                   className={inputCls}
-                  placeholder="Order #, customer, city, AWB…"
+                  placeholder="Order #, invoice #, customer, city, AWB…"
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
                 />

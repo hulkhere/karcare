@@ -29,7 +29,7 @@ export function MonthPicker({ month, year, onChange, onRefresh, loading }: {
         ))}
       </select>
       {onRefresh && (
-        <button onClick={onRefresh} disabled={loading} className={btn.secondary} title="Reload from Shopify">
+        <button onClick={onRefresh} disabled={loading} className={btn.secondary} title="Pull the latest data from Shopify">
           {loading ? <Spinner /> : "↻"} <span className="hidden sm:inline">{loading ? "Loading" : "Refresh"}</span>
         </button>
       )}

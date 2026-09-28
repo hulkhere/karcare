@@ -8,7 +8,6 @@ import type { InvoiceData } from "@/lib/types";
 // Built-in Helvetica has no ₹ glyph, so amounts use "Rs.".
 const s = StyleSheet.create({
   page: { padding: 36, fontSize: 9, fontFamily: "Helvetica", color: "#111" },
-  draft: { textAlign: "center", color: "#b91c1c", fontFamily: "Helvetica-Bold", marginTop: -8, marginBottom: 10 },
   title: { fontSize: 16, fontFamily: "Helvetica-Bold", textAlign: "center", marginBottom: 14, letterSpacing: 1 },
   row: { flexDirection: "row" },
   between: { flexDirection: "row", justifyContent: "space-between" },
@@ -32,7 +31,7 @@ const s = StyleSheet.create({
 const cols = { n: "5%", desc: "43%", code: "10%", qty: "7%", rate: "15%", taxable: "20%" };
 const rs = (n: number) => `Rs. ${formatINR(n)}`;
 
-function InvoicePage({ inv, draft }: { inv: InvoiceData; draft?: boolean }) {
+function InvoicePage({ inv }: { inv: InvoiceData }) {
   const pos = `${inv.placeOfSupply.state}${inv.placeOfSupply.code ? ` (${inv.placeOfSupply.code})` : ""}`;
   const taxRows = inv.intraState
     ? [
@@ -44,9 +43,6 @@ function InvoicePage({ inv, draft }: { inv: InvoiceData; draft?: boolean }) {
   return (
     <Page size="A4" style={s.page}>
       <Text style={s.title}>TAX INVOICE</Text>
-      {draft ? (
-        <Text style={s.draft}>DRAFT — month not closed yet; invoice number is provisional</Text>
-      ) : null}
 
       <View style={s.between}>
         <View style={{ width: "60%" }}>
@@ -65,8 +61,8 @@ function InvoicePage({ inv, draft }: { inv: InvoiceData; draft?: boolean }) {
           {[
             ["Invoice No.", inv.number],
             ["Invoice Date", formatDateNumericIST(inv.date)],
-            ["Order", inv.orderName],
-            ["Payment", inv.paymentType === "COD" ? "Cash on Delivery" : inv.paymentType],
+            ["Order", `${inv.orderName} · ${formatDateNumericIST(inv.orderDate)}`],
+            ["Payment", inv.kind === "forfeit" ? "Advance retained" : inv.paymentType === "COD" ? "Cash on Delivery" : "Prepaid"],
           ].map(([k, v]) => (
             <View key={k} style={s.between}>
               <Text style={s.muted}>{k}</Text>
@@ -145,6 +141,10 @@ function InvoicePage({ inv, draft }: { inv: InvoiceData; draft?: boolean }) {
           <Text style={s.bold}>Amount in Words: </Text>
           {inv.amountInWords}
         </Text>
+        <Text style={{ marginTop: 4 }}>
+          <Text style={s.bold}>Payment: </Text>
+          {inv.paymentNote.replace(/₹/g, "Rs. ")}
+        </Text>
       </View>
 
       <View style={s.footer}>
@@ -165,11 +165,11 @@ function InvoicePage({ inv, draft }: { inv: InvoiceData; draft?: boolean }) {
   );
 }
 
-export function InvoiceDocument({ invoices, draft }: { invoices: InvoiceData[]; draft?: boolean }) {
+export function InvoiceDocument({ invoices }: { invoices: InvoiceData[] }) {
   return (
     <Document title={invoices.length === 1 ? invoices[0].number : "KarCare Invoices"} author={SELLER.tradeName}>
       {invoices.map((inv) => (
-        <InvoicePage key={inv.number} inv={inv} draft={draft} />
+        <InvoicePage key={inv.number} inv={inv} />
       ))}
     </Document>
   );

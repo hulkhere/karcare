@@ -7,6 +7,7 @@ const TABS = [
   { href: "/", label: "Orders" },
   { href: "/ca-export", label: "CA Export" },
   { href: "/summary", label: "GST Summary" },
+  { href: "/insights", label: "Insights" },
 ];
 
 export function NavTabs() {

@@ -32,3 +32,12 @@ export const TEST_ORDER_MAX_AMOUNT = 50;
  * selected month but delivered during it.
  */
 export const COD_LOOKBACK_DAYS = 90;
+
+/** Invoice numbering starts here (IST) and restarts at 0001 every 1 April. */
+export const SERIES_START = { month: 8, year: 2026 };
+
+/**
+ * SAC used for the retained (non-refundable) COD advance when an order is cancelled
+ * or returned. Taxed at 18% like the goods. Confirm the code with your CA.
+ */
+export const FORFEIT_SAC = "9997";

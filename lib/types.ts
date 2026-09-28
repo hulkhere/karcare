@@ -1,22 +1,27 @@
 export type PaymentType = "Prepaid" | "COD" | "Other";
 
+/**
+ * What an invoice is for:
+ * - sale: goods supplied and paid for (prepaid order, or COD delivered)
+ * - forfeit: COD order cancelled / not delivered — the non-refundable advance is kept
+ */
+export type InvoiceKind = "sale" | "forfeit";
+
 /** Where an order lands for the selected month. */
 export type Bucket =
-  | "invoiceable" // qualifies for an invoice this month
-  | "pending_cod" // COD not yet delivered
-  | "other_month" // COD delivered, but invoiced in a different month
-  | "skipped"; // cancelled / refunded / test / unpaid etc.
+  | "invoiceable" // gets its invoice this month
+  | "pending_cod" // COD still on its way — no money event yet
+  | "other_month" // invoiced (or will be) in a different month
+  | "skipped"; // test, cancelled with nothing received, unpaid…
+
+/** What finally happened to an order (for insights). */
+export type Outcome = "Delivered" | "In transit" | "Not shipped" | "RTO" | "Cancelled" | "Test";
 
 export interface Address {
   name: string;
-  address1: string;
-  address2: string;
   city: string;
   province: string;
   provinceCode: string;
-  country: string;
-  zip: string;
-  phone: string;
 }
 
 export interface LineItem {
@@ -33,9 +38,18 @@ export interface Delivery {
   /** fulfillment.displayStatus, or null when not shipped */
   status: string | null;
   deliveredAt: string | null;
-  inTransitAt: string | null;
+  /** When the courier reported the delivery as failed (RTO) */
+  failedAt: string | null;
   shippedAt: string | null;
   tracking: { number: string | null; company: string | null; url: string | null } | null;
+}
+
+/** The money event that triggers an invoice. */
+export interface InvoiceEvent {
+  kind: InvoiceKind;
+  date: string; // ISO
+  amount: number; // ₹, GST-inclusive
+  why: string; // e.g. "Delivered", "Prepaid", "RTO — advance kept"
 }
 
 export interface Order {
@@ -44,10 +58,11 @@ export interface Order {
   createdAt: string;
   cancelledAt: string | null;
   financialStatus: string | null;
-  fulfillmentStatus: string | null;
-  paymentGateways: string[];
   paymentType: PaymentType;
   total: number;
+  received: number;
+  /** Paid online (for COD: the advance) */
+  paidOnline: number;
   shopifyTax: number;
   shipping: number;
   address: Address | null;
@@ -55,19 +70,12 @@ export interface Order {
   delivery: Delivery;
   tags: string[];
   isTest: boolean;
-  // Classification for the selected month
+  outcome: Outcome;
+  event: InvoiceEvent | null;
+  // For the selected month
   bucket: Bucket;
   reason: string;
-  invoiceDate: string | null;
-  /** Tax (₹) if invoiced — for summaries */
-  tax: number;
-}
-
-export interface OrdersResponse {
-  month: number;
-  year: number;
-  range: { start: string; end: string };
-  orders: Order[];
+  invoiceNumber: string | null;
 }
 
 export interface InvoiceLine {
@@ -82,10 +90,13 @@ export interface InvoiceLine {
 export interface InvoiceData {
   number: string;
   fileName: string;
+  kind: InvoiceKind;
   date: string; // ISO
   orderId: string;
   orderName: string;
+  orderDate: string;
   paymentType: PaymentType;
+  paymentNote: string;
   buyerName: string;
   placeOfSupply: { state: string; code: string | null };
   intraState: boolean;
@@ -98,3 +109,14 @@ export interface InvoiceData {
   amountInWords: string;
 }
 
+export interface MonthData {
+  month: number;
+  year: number;
+  /** Orders placed this month, plus orders from earlier months invoiced this month */
+  orders: Order[];
+  /** Final invoices for the month, in number order */
+  invoices: InvoiceData[];
+  /** The number series this month belongs to */
+  series: { start: string; firstNumber: number | null; lastNumber: number | null };
+  syncedAt: string;
+}

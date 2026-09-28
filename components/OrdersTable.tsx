@@ -14,7 +14,7 @@ export function OrdersTable({ orders }: { orders: Order[] }) {
         <thead className="border-b border-slate-100 bg-slate-50/70">
           <tr>
             <th className={th}>Order</th>
-            <th className={th}>Date (IST)</th>
+            <th className={th}>Placed (IST)</th>
             <th className={th}>Customer</th>
             <th className={th}>Location</th>
             <th className={`${th} text-right`}>Amount</th>
