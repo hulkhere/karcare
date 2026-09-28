@@ -4,7 +4,11 @@ const API_VERSION = process.env.SHOPIFY_API_VERSION || "2026-07";
 
 import { assembleJsonl, type RawOrder } from "./raw";
 
-/** Everything the app needs per order. Runs as a Shopify bulk export (no rate limits). */
+/**
+ * Everything the app needs per order. Runs as a Shopify bulk export (no rate limits).
+ * Bulk exports can't include a connection inside a list, so fulfillment events are
+ * fetched separately (see fetchFailureDates).
+ */
 const bulkOrdersQuery = (from: Date, to: Date) => `{
   orders(query: "created_at:>='${from.toISOString()}' created_at:<'${to.toISOString()}'") {
     edges { node {
@@ -20,8 +24,7 @@ const bulkOrdersQuery = (from: Date, to: Date) => `{
       lineItems { edges { node { id title variantTitle quantity sku
         originalUnitPriceSet { shopMoney { amount } } discountedTotalSet { shopMoney { amount } } } } }
       fulfillments { id status displayStatus deliveredAt updatedAt createdAt
-        trackingInfo { number company url }
-        events { edges { node { id status happenedAt } } } }
+        trackingInfo { number company url } }
     } }
   }
 }`;
@@ -145,4 +148,22 @@ export async function downloadOrders(url: string | null): Promise<RawOrder[]> {
   const res = await fetch(url, { cache: "no-store" });
   if (!res.ok) throw new Error(`Couldn't download the export (${res.status})`);
   return assembleJsonl(await res.text());
+}
+
+const EVENTS_QUERY = `query Events($ids: [ID!]!) {
+  nodes(ids: $ids) {
+    ... on Fulfillment { id events(first: 15, sortKey: HAPPENED_AT) { nodes { status happenedAt } } }
+  }
+}`;
+
+/** Tracking events for the given fulfillments (used to date RTOs exactly). */
+export async function fetchFulfillmentEvents(ids: string[]) {
+  const out = new Map<string, { status: string; happenedAt: string }[]>();
+  for (let i = 0; i < ids.length; i += 25) {
+    const data = await shopifyGraphQL<{
+      nodes: ({ id: string; events: { nodes: { status: string; happenedAt: string }[] } } | null)[];
+    }>(EVENTS_QUERY, { ids: ids.slice(i, i + 25) });
+    for (const n of data.nodes) if (n?.events) out.set(n.id, n.events.nodes);
+  }
+  return out;
 }

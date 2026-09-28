@@ -1,7 +1,7 @@
 import "server-only";
 import { buildMonth } from "./orders";
 import type { RawOrder } from "./raw";
-import { downloadOrders, exportStatus } from "./shopify";
+import { downloadOrders, exportStatus, fetchFulfillmentEvents } from "./shopify";
 
 export function parseMonthYear(month: unknown, year: unknown) {
   const m = Number(month);
@@ -19,9 +19,24 @@ export async function monthFromExport(exportId: string, month: number, year: num
   if (!hit) {
     const status = await exportStatus(exportId);
     if (status.status !== "COMPLETED") throw new Error(`Export is ${status.status.toLowerCase()}`);
-    hit = { orders: await downloadOrders(status.url), at: new Date().toISOString() };
+    const orders = await downloadOrders(status.url);
+    await attachFailureEvents(orders);
+    hit = { orders, at: new Date().toISOString() };
     cache.set(exportId, hit);
     if (cache.size > 3) cache.delete(cache.keys().next().value!);
   }
   return buildMonth(hit.orders, { month, year }, { syncedAt: hit.at });
+}
+
+const FAILED = ["FAILURE", "NOT_DELIVERED"];
+
+/**
+ * An RTO is invoiced on the day the courier reported the failure. That date lives in the
+ * fulfillment's events, which the bulk export can't include — fetch them just for failed shipments.
+ */
+async function attachFailureEvents(orders: RawOrder[]) {
+  const failed = orders.flatMap((o) => (o.fulfillments ?? []).filter((f) => FAILED.includes(f.displayStatus ?? "")));
+  if (!failed.length) return;
+  const events = await fetchFulfillmentEvents(failed.map((f) => f.id));
+  for (const f of failed) f.events = events.get(f.id) ?? [];
 }
