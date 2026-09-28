@@ -23,6 +23,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             <Link href="/summary" className="text-sm text-slate-600 hover:text-slate-900">
               GST Summary
             </Link>
+            <Link href="/archive" className="text-sm text-slate-600 hover:text-slate-900">
+              Archive
+            </Link>
           </nav>
         </header>
         {children}

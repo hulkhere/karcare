@@ -12,7 +12,6 @@ import { useMonthOrders } from "@/lib/useMonthOrders";
 function Dashboard() {
   const { month, year, setMonthYear, data, loading, error, fetchOrders } = useMonthOrders();
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [startNumber, setStartNumber] = useState(1);
 
   const orders = useMemo(() => data?.orders ?? [], [data]);
   const invoiceableIds = useMemo(() => orders.filter((o) => o.bucket === "invoiceable").map((o) => o.id), [orders]);
@@ -72,19 +71,21 @@ function Dashboard() {
               onToggleAll={(checked) => setSelected(checked ? new Set(invoiceableIds) : new Set())}
             />
           )}
-          <div className="flex flex-wrap items-start gap-6 rounded-xl border border-slate-200 bg-white p-4">
-            <label className="text-sm">
-              <span className="block text-slate-600">Starting invoice number</span>
-              <input
-                type="number"
-                min={1}
-                value={startNumber}
-                onChange={(e) => setStartNumber(Math.max(1, Math.floor(Number(e.target.value) || 1)))}
-                className="mt-1 w-28 rounded-md border border-slate-300 px-3 py-2"
-              />
-            </label>
-            <GenerateButton month={data.month} year={data.year} orderIds={selectedIds} startNumber={startNumber} />
-          </div>
+          {data.archive ? (
+            <div className="rounded-xl border border-green-200 bg-green-50 p-4 text-sm text-green-900">
+              <strong>{monthLabel(data.month, data.year)} is closed.</strong>{" "}
+              {data.archive.count > 0
+                ? `${data.archive.count} final invoice(s): ${data.archive.firstInvoice} → ${data.archive.lastInvoice}.`
+                : "No invoices this month."}{" "}
+              <Link href="/archive" className="font-medium underline">
+                Download from Archive
+              </Link>
+            </div>
+          ) : (
+            <div className="rounded-xl border border-slate-200 bg-white p-4">
+              <GenerateButton month={data.month} year={data.year} orderIds={selectedIds} />
+            </div>
+          )}
         </>
       )}
     </main>

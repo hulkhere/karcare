@@ -51,8 +51,8 @@ export function monthLabel(month: number, year: number) {
 }
 
 /** Current month/year in IST. */
-export function currentMonthIST() {
-  const { month, year } = istParts(new Date().toISOString());
+export function currentMonthIST(now: Date = new Date()) {
+  const { month, year } = istParts(now.toISOString());
   return { month, year };
 }
 

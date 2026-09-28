@@ -8,6 +8,7 @@ import type { InvoiceData } from "@/lib/types";
 // Built-in Helvetica has no ₹ glyph, so amounts use "Rs.".
 const s = StyleSheet.create({
   page: { padding: 36, fontSize: 9, fontFamily: "Helvetica", color: "#111" },
+  draft: { textAlign: "center", color: "#b91c1c", fontFamily: "Helvetica-Bold", marginTop: -8, marginBottom: 10 },
   title: { fontSize: 16, fontFamily: "Helvetica-Bold", textAlign: "center", marginBottom: 14, letterSpacing: 1 },
   row: { flexDirection: "row" },
   between: { flexDirection: "row", justifyContent: "space-between" },
@@ -31,8 +32,7 @@ const s = StyleSheet.create({
 const cols = { n: "5%", desc: "43%", code: "10%", qty: "7%", rate: "15%", taxable: "20%" };
 const rs = (n: number) => `Rs. ${formatINR(n)}`;
 
-function InvoicePage({ inv }: { inv: InvoiceData }) {
-  const b = inv.buyer;
+function InvoicePage({ inv, draft }: { inv: InvoiceData; draft?: boolean }) {
   const pos = `${inv.placeOfSupply.state}${inv.placeOfSupply.code ? ` (${inv.placeOfSupply.code})` : ""}`;
   const taxRows = inv.intraState
     ? [
@@ -44,11 +44,13 @@ function InvoicePage({ inv }: { inv: InvoiceData }) {
   return (
     <Page size="A4" style={s.page}>
       <Text style={s.title}>TAX INVOICE</Text>
+      {draft ? (
+        <Text style={s.draft}>DRAFT — month not closed yet; invoice number is provisional</Text>
+      ) : null}
 
       <View style={s.between}>
         <View style={{ width: "60%" }}>
           <Text style={s.sellerName}>{SELLER.tradeName}</Text>
-          <Text>{SELLER.legalName}</Text>
           <Text>{SELLER.address}</Text>
           <Text>
             {SELLER.city}, {SELLER.district}, {SELLER.state} - {SELLER.pin}
@@ -76,24 +78,9 @@ function InvoicePage({ inv }: { inv: InvoiceData }) {
 
       <View style={s.rule} />
 
-      <Text style={s.label}>Bill To / Ship To</Text>
-      {b ? (
-        <View>
-          <Text style={s.bold}>{b.name || "Customer"}</Text>
-          {b.address1 ? <Text>{b.address1}</Text> : null}
-          {b.address2 ? <Text>{b.address2}</Text> : null}
-          <Text>
-            {[b.city, b.province].filter(Boolean).join(", ")}
-            {b.zip ? ` - ${b.zip}` : ""}
-          </Text>
-          <Text>
-            State: {pos}
-            {b.phone ? `  |  Phone: ${b.phone}` : ""}
-          </Text>
-        </View>
-      ) : (
-        <Text style={s.muted}>No address on order</Text>
-      )}
+      <Text style={s.label}>Bill To</Text>
+      <Text style={s.bold}>{inv.buyerName}</Text>
+      <Text>State: {pos}</Text>
 
       <View style={s.table}>
         <View style={s.th}>
@@ -178,11 +165,11 @@ function InvoicePage({ inv }: { inv: InvoiceData }) {
   );
 }
 
-export function InvoiceDocument({ invoices }: { invoices: InvoiceData[] }) {
+export function InvoiceDocument({ invoices, draft }: { invoices: InvoiceData[]; draft?: boolean }) {
   return (
     <Document title={invoices.length === 1 ? invoices[0].number : "KarCare Invoices"} author={SELLER.tradeName}>
       {invoices.map((inv) => (
-        <InvoicePage key={inv.number} inv={inv} />
+        <InvoicePage key={inv.number} inv={inv} draft={draft} />
       ))}
     </Document>
   );

@@ -24,19 +24,17 @@ export function GenerateButton({
   month,
   year,
   orderIds,
-  startNumber,
 }: {
   month: number;
   year: number;
   orderIds: string[];
-  startNumber: number;
 }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<Result | null>(null);
 
   // Any change in selection/numbering invalidates generated files.
-  useEffect(() => setResult(null), [month, year, orderIds.join(","), startNumber]);
+  useEffect(() => setResult(null), [month, year, orderIds.join(",")]);
 
   async function generate() {
     setBusy(true);
@@ -46,7 +44,7 @@ export function GenerateButton({
       const res = await fetch("/api/generate-invoices", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ month, year, orderIds, startNumber }),
+        body: JSON.stringify({ month, year, orderIds }),
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error ?? `Request failed (${res.status})`);
@@ -58,10 +56,10 @@ export function GenerateButton({
         import("./InvoicePDF"),
         import("jszip"),
       ]);
-      const merged = await pdf(<InvoiceDocument invoices={invoices} />).toBlob();
+      const merged = await pdf(<InvoiceDocument invoices={invoices} draft />).toBlob();
       const zip = new JSZip();
       for (const inv of invoices) {
-        zip.file(inv.fileName, await pdf(<InvoiceDocument invoices={[inv]} />).toBlob());
+        zip.file(inv.fileName, await pdf(<InvoiceDocument invoices={[inv]} draft />).toBlob());
       }
       setResult({ invoices, rejected: json.rejected ?? [], merged, zip: await zip.generateAsync({ type: "blob" }) });
     } catch (e) {
@@ -71,7 +69,7 @@ export function GenerateButton({
     }
   }
 
-  const tag = `${year}-${String(month).padStart(2, "0")}`;
+  const tag = `DRAFT-${year}-${String(month).padStart(2, "0")}`;
   const btn = "rounded-md px-4 py-2 text-sm font-medium disabled:cursor-not-allowed disabled:opacity-50";
 
   return (
@@ -82,7 +80,7 @@ export function GenerateButton({
           disabled={busy || orderIds.length === 0}
           className={`${btn} bg-green-700 text-white hover:bg-green-800`}
         >
-          {busy ? "Generating…" : `Generate Invoices (${orderIds.length})`}
+          {busy ? "Generating…" : `Generate Draft Invoices (${orderIds.length})`}
         </button>
         <button
           onClick={() => result && download(result.merged, `KarCare-Invoices-${tag}.pdf`)}
@@ -109,7 +107,8 @@ export function GenerateButton({
             {" · "}Total ₹{formatINR(result.invoices.reduce((s, i) => s + i.total, 0))}
           </p>
           <p className="mt-1 text-xs text-green-700">
-            Next month, start from {startNumber + result.invoices.length} to keep the sequence continuous.
+            Drafts only — numbers are provisional. Final invoices are created automatically when the month
+            closes and appear in the Archive tab.
           </p>
           {result.rejected.length > 0 && (
             <ul className="mt-2 list-disc pl-5 text-xs text-amber-800">

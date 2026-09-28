@@ -68,6 +68,8 @@ export interface OrdersResponse {
   year: number;
   range: { start: string; end: string };
   orders: Order[];
+  /** Set when the month is closed: its invoices are final and live in the archive. */
+  archive: ArchiveMonth | null;
 }
 
 export interface InvoiceLine {
@@ -86,7 +88,7 @@ export interface InvoiceData {
   orderId: string;
   orderName: string;
   paymentType: PaymentType;
-  buyer: Address | null;
+  buyerName: string;
   placeOfSupply: { state: string; code: string | null };
   intraState: boolean;
   lines: InvoiceLine[];
@@ -96,4 +98,32 @@ export interface InvoiceData {
   sgst: number;
   total: number;
   amountInWords: string;
+}
+
+/** A closed month: invoices are final and numbers never change. */
+export interface ArchiveSnapshot {
+  key: string; // "2026-08"
+  month: number;
+  year: number;
+  closedAt: string;
+  firstNumber: number;
+  /** Number the following month continues from (firstNumber + invoices.length, or 1 in April). */
+  nextNumber: number;
+  invoices: InvoiceData[];
+  /** COD orders delivered in an earlier month whose delivery was only recorded after that month closed. */
+  lateOrders: string[];
+}
+
+export interface ArchiveMonth {
+  key: string;
+  month: number;
+  year: number;
+  closedAt: string;
+  count: number;
+  firstInvoice: string | null;
+  lastInvoice: string | null;
+  taxable: number;
+  tax: number;
+  total: number;
+  lateOrders: string[];
 }

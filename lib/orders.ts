@@ -201,7 +201,7 @@ export function buildInvoice(o: Order, seq: number): InvoiceData {
     orderId: o.id,
     orderName: o.name,
     paymentType: o.paymentType,
-    buyer: o.address,
+    buyerName: o.address?.name || "Customer",
     placeOfSupply: {
       state: o.address?.province || "—",
       code: stateCodeFor(o.address?.provinceCode),
