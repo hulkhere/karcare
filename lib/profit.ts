@@ -62,7 +62,15 @@ export interface ProfitData {
     input: { shipping: number; gateway: number; packaging: number; ads: number; total: number };
     net: number;
   };
-  ads: { configured: boolean; error: string | null; unassigned: { product: string; spend: number }[] };
+  ads: {
+    configured: boolean;
+    error: string | null;
+    unassigned: { product: string; spend: number }[];
+    /** Latest date found in the sheet, and how many entries were read */
+    lastDate: string | null;
+    entries: number;
+    skipped: string[];
+  };
   missingCosts: string[];
   syncedAt: string;
 }
@@ -151,7 +159,7 @@ export function codDeliveryRate(orders: Normalized[], now: Date, days = 75) {
 export function buildProfit(
   all: Normalized[],
   ym: YM,
-  ads: { rows: AdRow[]; configured: boolean; error: string | null },
+  ads: { rows: AdRow[]; configured: boolean; error: string | null; skipped?: string[] },
   opts: { now?: Date; syncedAt?: string } = {},
 ): ProfitData {
   const now = opts.now ?? new Date();
@@ -306,6 +314,9 @@ export function buildProfit(
       configured: ads.configured,
       error: ads.error,
       unassigned: [...unassigned].map(([product, spend]) => ({ product, spend })),
+      lastDate: ads.rows.reduce<string | null>((m, a) => (a.spend && (!m || a.date > m) ? a.date : m), null),
+      entries: ads.rows.length,
+      skipped: ads.skipped ?? [],
     },
     missingCosts: [...missing],
     syncedAt: opts.syncedAt ?? now.toISOString(),

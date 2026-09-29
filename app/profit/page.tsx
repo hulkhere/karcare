@@ -188,6 +188,19 @@ function Profit() {
         </Alert>
       )}
       {data?.ads.error && <Alert>{data.ads.error}</Alert>}
+      {data && data.ads.configured && !data.ads.error && (
+        <p className="text-xs text-slate-500">
+          Ad spend sheet: {data.ads.entries} entries read
+          {data.ads.lastDate ? `, latest ${formatDateIST(`${data.ads.lastDate}T06:30:00Z`)}` : ""}. Just edited it? Google can
+          take up to 5 minutes to publish changes — then press Refresh.
+        </p>
+      )}
+      {data && data.ads.skipped.length > 0 && (
+        <Alert>
+          These dates in the ad spend sheet couldn&apos;t be read, so their spend is left out:{" "}
+          <strong>{data.ads.skipped.join(", ")}</strong>. Use DD/MM/YYYY, e.g. 27/09/2026.
+        </Alert>
+      )}
       {data && data.ads.unassigned.length > 0 && (
         <Alert tone="amber">
           Ad spend with a product name that doesn&apos;t match any Shopify product (counted in the total only):{" "}

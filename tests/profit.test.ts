@@ -3,7 +3,7 @@ import { unitCost } from "../lib/costs";
 import { normalize } from "../lib/orders";
 import { buildProfit } from "../lib/profit";
 import type { RawOrder } from "../lib/raw";
-import { parseAdSpend, parseDate } from "../lib/sheet";
+import { parseAdSpend, parseAdSpendDetailed, parseDate } from "../lib/sheet";
 
 const m = (a: number) => ({ shopMoney: { amount: String(a) } });
 let n = 0;
@@ -176,5 +176,13 @@ describe("sheet parsing", () => {
     expect(parseAdSpend(csv, now)).toEqual([{ date: "2026-08-29", product: "Door Shock Absorbers", spend: 4700 }]);
     expect(parseDate("15-Jan", new Date("2026-12-20T00:00:00Z"))).toBe("2026-01-15");
     expect(parseDate("25-Dec", new Date("2027-01-05T00:00:00Z"))).toBe("2026-12-25");
+    expect(parseDate("27/09", now)).toBe("2026-09-27");
+  });
+
+  it("reports rows whose date can't be read (e.g. US-style 9/27/2026)", () => {
+    const csv = "Date,Door Shock Absorbers,Car Door Protector,Total\n26/09/2026,5540,8260,13800\n9/27/2026,6000,8000,14000\n,,,\n";
+    const r = parseAdSpendDetailed(csv, new Date("2026-09-29T00:00:00Z"));
+    expect(r.rows).toHaveLength(2);
+    expect(r.skipped).toEqual(["9/27/2026"]);
   });
 });
