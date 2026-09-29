@@ -104,6 +104,12 @@ export function parseAdSpendDetailed(text: string, now = new Date()): { rows: Ad
   const rows = parseCsv(text);
   const skipped: string[] = [];
   if (!rows.length) return { rows: [], skipped };
+  const tomorrow = new Date(now.getTime() + 864e5).toISOString().slice(0, 10);
+  const future = (date: string, r: string[]) => {
+    if (date <= tomorrow) return false;
+    skipped.push(`${(r[di] ?? "").trim()} (future date — check the year)`);
+    return true;
+  };
   const note = (r: string[]) => {
     const cell = (r[di] ?? "").trim();
     if (cell && r.slice(1).some((c) => amount(c) > 0)) skipped.push(cell);
@@ -121,7 +127,7 @@ export function parseAdSpendDetailed(text: string, now = new Date()): { rows: Ad
       const date = parseDate(r[di] ?? "", now);
       const spend = amount(r[si]);
       if (!date) note(r);
-      if (!date || !Number.isFinite(spend)) continue;
+      if (!date || !Number.isFinite(spend) || future(date, r)) continue;
       out.push({ date, product: (r[pi] ?? "").trim(), spend });
     }
     return { rows: out, skipped };
@@ -136,6 +142,7 @@ export function parseAdSpendDetailed(text: string, now = new Date()): { rows: Ad
       note(r);
       continue;
     }
+    if (future(date, r)) continue;
     for (const { i, product } of productCols) {
       const spend = amount(r[i]);
       if (Number.isFinite(spend) && spend !== 0) out.push({ date, product, spend });

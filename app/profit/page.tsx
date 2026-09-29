@@ -197,8 +197,9 @@ function Profit() {
       )}
       {data && data.ads.skipped.length > 0 && (
         <Alert>
-          These dates in the ad spend sheet couldn&apos;t be read, so their spend is left out:{" "}
-          <strong>{data.ads.skipped.join(", ")}</strong>. Use DD/MM/YYYY, e.g. 27/09/2026.
+          These rows in the ad spend sheet were left out:{" "}
+          <strong>{data.ads.skipped.join(", ")}</strong>. Use DD/MM/YYYY with the right year, e.g. 27/09/2026 (dragging
+          dates down in Sheets can change the year).
         </Alert>
       )}
       {data && data.ads.unassigned.length > 0 && (

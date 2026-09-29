@@ -185,4 +185,11 @@ describe("sheet parsing", () => {
     expect(r.rows).toHaveLength(2);
     expect(r.skipped).toEqual(["9/27/2026"]);
   });
+
+  it("flags rows dated in the future (drag-fill changed the year)", () => {
+    const csv = "Date,Door Shock Absorbers,Car Door Protector,Total\n26/09/2026,5540,8260,13800\n27/09/2027,6960,10050,17010\n28/09/2028,5830,8800,14630\n";
+    const r = parseAdSpendDetailed(csv, new Date("2026-09-29T06:00:00Z"));
+    expect(r.rows).toHaveLength(2);
+    expect(r.skipped).toEqual(["27/09/2027 (future date — check the year)", "28/09/2028 (future date — check the year)"]);
+  });
 });
