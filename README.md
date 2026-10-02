@@ -66,19 +66,29 @@ Orders count on the day they're placed (the day the ad money was spent). Amounts
 | RTO | ₹99 advance | ₹0 (restocked) | ₹67.50 × 2 | ₹10 | fee lost |
 | Cancelled before shipping | ₹99 advance | ₹0 | ₹0 | ₹0 | fee lost |
 
-COD orders still in transit are counted at the recent COD delivery rate; **Confirmed profit** leaves them out. All rates and product costs are in `lib/costs.ts`.
+COD orders still in transit are counted at the recent COD delivery rate; **Confirmed profit** leaves them out. All rates are in `lib/costs.ts`.
+
+### Products
+
+| Shopify product | Cost per unit | HSN |
+|---|---|---|
+| Door Shock Absorbers | ₹7 per piece (8pc ₹56, 16pc ₹112) | 8708 |
+| Car Door Protector - Latch Cover | 4pcs ₹55, 8pcs ₹110 | 8708 |
+| Blind Spot Side Mirrors | ₹50 (both variants) | 8708 |
+
+**Adding a product:** add an entry to `CATALOG` in `lib/costs.ts` (Shopify name, a matching pattern, HSN, cost per unit), then add a column for it in the ad-spend sheet. Until a product is in the catalogue, the Profit tab shows a red "no product cost" warning for it.
 
 ### Ad spend sheet
 
 One tab named **Ad spend**, one row per day, one column per product:
 
-| Date | Door Shock Absorbers | Car Door Protector | Total |
-|---|---|---|---|
-| 05/09/2026 | 7455 | 5533 | 12988 |
-| 06/09/2026 | 10850 | 5180 | 16030 |
+| Date | Door Shock Absorbers | Car Door Protector | Blind Spot Mirror | Total |
+|---|---|---|---|---|
+| 01/10/2026 | 6000 | 8000 | 1500 | 15500 |
+| 02/10/2026 | 5800 | 8200 | 2000 | 16000 |
 
 - **Date**: DD/MM/YYYY ("29-Aug" and "1 Sep 2026" also work).
-- **Product columns**: header = the Shopify product name, or a clear part of it. Add a column when you launch a new product. A header that matches no product is counted in the total and flagged.
+- **Product columns**: header = the Shopify product name or its key words — every word in the header must appear in the product name (singular/plural doesn't matter), e.g. "Blind Spot Mirror" → Blind Spot Side Mirrors. Avoid one-word headers like "Door". For a new product, insert a column before Total. A header that matches no product is counted in the total and flagged.
 - **Values**: "Amount spent" from Meta Ads Manager, **without** the 18% GST. Blank = no spend. ₹ and commas are fine.
 - **Total**: optional (e.g. `=SUM(B2:C2)`) — the app ignores it.
 

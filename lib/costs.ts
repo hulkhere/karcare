@@ -26,16 +26,43 @@ export const COSTS = {
   adsGstRate: 18,
 };
 
+/**
+ * Product catalogue. To add a product: add an entry here with its Shopify name,
+ * a pattern that matches that name, its HSN code and its cost per unit sold.
+ */
+export const CATALOG: {
+  name: string;
+  match: RegExp;
+  hsn: string;
+  /** Cost of one unit of the given variant (ex-GST, no input credit). null = unknown variant. */
+  cost: (variant: string | null, pieces: number) => number | null;
+}[] = [
+  {
+    name: "Door Shock Absorbers",
+    match: /door shock absorber/i,
+    hsn: "8708",
+    cost: (_v, pieces) => (Number.isFinite(pieces) ? pieces * 7 : null), // ₹7 per piece: 8pc ₹56, 16pc ₹112
+  },
+  {
+    name: "Car Door Protector - Latch Cover",
+    match: /door protector|latch cover/i,
+    hsn: "8708",
+    cost: (_v, pieces) => (pieces === 4 ? 55 : pieces === 8 ? 110 : Number.isFinite(pieces) ? pieces * 13.75 : null),
+  },
+  {
+    name: "Blind Spot Side Mirrors",
+    match: /blind spot/i,
+    hsn: "8708",
+    cost: () => 50, // ₹50 per unit, both variants (Frameless, Black Frame)
+  },
+];
+
+export const catalogEntry = (title: string) => CATALOG.find((c) => c.match.test(title));
+
 /** Cost of goods per unit, by product and variant. Returns null if unknown. */
 export function unitCost(title: string, variant: string | null): number | null {
   const pieces = Number(/(\d+)\s*(?:pc|pcs|piece|pieces)\b/i.exec(variant ?? "")?.[1] ?? NaN);
-  if (/door shock absorber/i.test(title)) return Number.isFinite(pieces) ? pieces * 7 : null;
-  if (/door protector|latch cover/i.test(title)) {
-    if (pieces === 4) return 55;
-    if (pieces === 8) return 110;
-    return Number.isFinite(pieces) ? pieces * 13.75 : null;
-  }
-  return null;
+  return catalogEntry(title)?.cost(variant, pieces) ?? null;
 }
 
 export const exGst = (inclusive: number, rate: number) => inclusive / (1 + rate / 100);

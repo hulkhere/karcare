@@ -7,6 +7,7 @@ import {
   SHIPPING_SAC,
   TEST_ORDER_MAX_AMOUNT,
 } from "./constants";
+import { catalogEntry } from "./costs";
 import { formatDateIST, formatDateNumericIST, istParts, monthLabel, monthRangeUTC } from "./dates";
 import {
   allocate,
@@ -163,7 +164,7 @@ export function computeAmounts(o: Pick<Order, "total" | "shipping" | "shopifyTax
     (li, i) => ({
       gross: productGross[i],
       taxable: Math.round(productGross[i] / GST_DIVISOR),
-      line: { description: li.title, variant: li.variantTitle, code: PRODUCT_HSN, quantity: li.quantity },
+      line: { description: li.title, variant: li.variantTitle, code: catalogEntry(li.title)?.hsn ?? PRODUCT_HSN, quantity: li.quantity },
     }),
   );
   if (shippingPaise > 0) {

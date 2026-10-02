@@ -1,4 +1,4 @@
-import { COSTS, exGst, unitCost } from "./costs";
+import { CATALOG, COSTS, exGst, unitCost } from "./costs";
 import { istParts, monthRangeUTC } from "./dates";
 import { GST_RATE } from "./constants";
 import { allocate, fromPaise, toPaise } from "./gst";
@@ -139,7 +139,28 @@ const dayOf = (iso: string) => {
   const { year, month, day } = istParts(iso);
   return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
 };
-const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
+const words = (s: string) =>
+  s.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean).map((w) => (w.length > 3 && w.endsWith("s") ? w.slice(0, -1) : w));
+
+/**
+ * Match a sheet column / product name to a Shopify product: every word of one must appear in
+ * the other (singular/plural ignored). "Blind Spot Mirror" → "Blind Spot Side Mirrors",
+ * "Car Door Protector" → "Car Door Protector - Latch Cover".
+ */
+export function matchProduct(name: string, titles: string[]): string | null {
+  const a = words(name).filter((w) => !["ad", "ads", "spend", "ex", "gst"].includes(w));
+  if (!a.length) return null;
+  let best: string | null = null;
+  let bestScore = 0;
+  for (const t of titles) {
+    const b = words(t);
+    const shared = a.filter((w) => b.includes(w)).length;
+    if (shared === a.length || shared === b.length) {
+      if (shared > bestScore) [best, bestScore] = [t, shared];
+    }
+  }
+  return best;
+}
 
 /** Share of settled COD orders (delivered vs returned) from the last `days` days. */
 export function codDeliveryRate(orders: Normalized[], now: Date, days = 75) {
@@ -261,15 +282,15 @@ export function buildProfit(
   }
 
   // Ad spend: per product per day from the sheet, matched to Shopify product titles
-  const titles = [...products.keys()];
+  // Products with orders this month, plus the catalogue (so launch-day spend still counts)
+  const titles = [...new Set([...products.keys(), ...CATALOG.map((c) => c.name)])];
   const unassigned = new Map<string, number>();
   for (const a of ads.rows) {
     if (a.date < dayOf(start) || a.date >= dayOf(end) || !a.spend) continue;
-    const key = norm(a.product);
-    const title = titles.find((t) => key && (norm(t).includes(key) || key.includes(norm(t))));
+    const title = matchProduct(a.product, titles);
     // You pay spend + 18% GST; the GST comes back as input credit, so profit drops by the spend.
     const gst = a.spend * (COSTS.adsGstRate / 100);
-    for (const r of [row(days, a.date), title ? products.get(title)! : null, totals]) {
+    for (const r of [row(days, a.date), title ? row(products, title) : null, totals]) {
       if (!r) continue;
       r.adSpend += a.spend;
       r.ads += a.spend + gst;

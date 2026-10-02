@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { unitCost } from "../lib/costs";
 import { normalize } from "../lib/orders";
-import { buildProfit } from "../lib/profit";
+import { buildProfit, matchProduct } from "../lib/profit";
 import type { RawOrder } from "../lib/raw";
 import { parseAdSpend, parseAdSpendDetailed, parseDate } from "../lib/sheet";
 
@@ -33,7 +33,20 @@ describe("unit costs", () => {
     expect(unitCost("Door Shock Absorbers", "8 Piece - Half Car")).toBe(56);
     expect(unitCost("Car Door Protector - Latch Cover", "4pcs - For 1 Car")).toBe(55);
     expect(unitCost("Car Door Protector - Latch Cover", "8pcs - For 2 Cars")).toBe(110);
+    expect(unitCost("Blind Spot Side Mirrors", "Frameless")).toBe(50);
+    expect(unitCost("Blind Spot Side Mirrors", "Black Frame - Best Seller")).toBe(50);
     expect(unitCost("Mystery Item", null)).toBeNull();
+  });
+
+  it("matches sheet column names to Shopify products word by word", () => {
+    const titles = ["Door Shock Absorbers", "Car Door Protector - Latch Cover", "Blind Spot Side Mirrors"];
+    expect(matchProduct("Blind Spot Mirror", titles)).toBe("Blind Spot Side Mirrors");
+    expect(matchProduct("blind spot mirrors", titles)).toBe("Blind Spot Side Mirrors");
+    expect(matchProduct("Car Door Protector", titles)).toBe("Car Door Protector - Latch Cover");
+    expect(matchProduct("Latch Cover", titles)).toBe("Car Door Protector - Latch Cover");
+    expect(matchProduct("Door Shock Absorber", titles)).toBe("Door Shock Absorbers");
+    expect(matchProduct("Door", titles)).toBe("Door Shock Absorbers"); // ambiguous → first full match; avoid one-word headers
+    expect(matchProduct("Old campaign", titles)).toBeNull();
   });
 });
 
@@ -133,6 +146,10 @@ describe("order economics (cash incl. GST, then GST settled)", () => {
     const without = run([order({ at: "2026-09-05T06:00:00Z", outcome: "delivered" }), order({ at: "2026-09-05T07:00:00Z", outcome: "delivered", title: "Car Door Protector - Latch Cover", variant: "4pcs - For 1 Car", total: 599 })]);
     expect(r2(without.totals.profit - d.totals.profit)).toBe(450);
     expect(d.ads.unassigned).toEqual([{ product: "Old campaign", spend: 50 }]);
+    // spend for a catalogue product with no orders yet still gets its own row
+    const launch = run([], { configured: true, error: null, rows: [{ date: "2026-09-10", product: "Blind Spot Mirror", spend: 500 }] });
+    expect(launch.products.find((p) => p.key === "Blind Spot Side Mirrors")!.adSpend).toBe(500);
+    expect(launch.ads.unassigned).toEqual([]);
     expect(d.gst.net).toBe(r2(d.gst.output - d.gst.input.total));
   });
 
