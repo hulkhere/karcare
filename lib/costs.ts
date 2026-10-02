@@ -52,8 +52,8 @@ export const CATALOG: {
   {
     name: "Blind Spot Side Mirrors",
     match: /blind spot/i,
-    hsn: "8708",
-    cost: () => 50, // ₹50 per unit, both variants (Frameless, Black Frame)
+    hsn: "7009", // 7009 10 00 — rear-view mirrors for vehicles (18%)
+    cost: (variant) => (/frameless/i.test(variant ?? "") ? 25 : /frame/i.test(variant ?? "") ? 50 : null),
   },
 ];
 

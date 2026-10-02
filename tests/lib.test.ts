@@ -184,6 +184,17 @@ describe("invoice numbering follows when money is received", () => {
   });
 });
 
+describe("HSN per product", () => {
+  it("mirrors use 7009, other products 8708", () => {
+    n = 9500;
+    const r = order({ at: "2026-10-02T06:00:00Z" });
+    r.lineItems[0].title = "Blind Spot Side Mirrors";
+    r.lineItems[0].variantTitle = "Frameless";
+    const inv = buildMonth([r, order({ at: "2026-10-02T07:00:00Z" })], { month: 10, year: 2026 }).invoices;
+    expect(inv.map((i) => i.lines[0].code)).toEqual(["7009", "8708"]);
+  });
+});
+
 describe("bulk export parsing", () => {
   it("puts child rows back under their parents", () => {
     const jsonl = [

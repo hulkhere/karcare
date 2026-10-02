@@ -74,7 +74,7 @@ COD orders still in transit are counted at the recent COD delivery rate; **Confi
 |---|---|---|
 | Door Shock Absorbers | ₹7 per piece (8pc ₹56, 16pc ₹112) | 8708 |
 | Car Door Protector - Latch Cover | 4pcs ₹55, 8pcs ₹110 | 8708 |
-| Blind Spot Side Mirrors | ₹50 (both variants) | 8708 |
+| Blind Spot Side Mirrors | Frameless ₹25, Black Frame ₹50 | 7009 (rear-view mirrors for vehicles) |
 
 **Adding a product:** add an entry to `CATALOG` in `lib/costs.ts` (Shopify name, a matching pattern, HSN, cost per unit), then add a column for it in the ad-spend sheet. Until a product is in the catalogue, the Profit tab shows a red "no product cost" warning for it.
 

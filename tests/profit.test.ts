@@ -33,7 +33,7 @@ describe("unit costs", () => {
     expect(unitCost("Door Shock Absorbers", "8 Piece - Half Car")).toBe(56);
     expect(unitCost("Car Door Protector - Latch Cover", "4pcs - For 1 Car")).toBe(55);
     expect(unitCost("Car Door Protector - Latch Cover", "8pcs - For 2 Cars")).toBe(110);
-    expect(unitCost("Blind Spot Side Mirrors", "Frameless")).toBe(50);
+    expect(unitCost("Blind Spot Side Mirrors", "Frameless")).toBe(25);
     expect(unitCost("Blind Spot Side Mirrors", "Black Frame - Best Seller")).toBe(50);
     expect(unitCost("Mystery Item", null)).toBeNull();
   });
