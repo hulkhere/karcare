@@ -35,6 +35,8 @@ describe("unit costs", () => {
     expect(unitCost("Car Door Protector - Latch Cover", "8pcs - For 2 Cars")).toBe(110);
     expect(unitCost("Blind Spot Side Mirrors", "Frameless")).toBe(25);
     expect(unitCost("Blind Spot Side Mirrors", "Black Frame - Best Seller")).toBe(50);
+    expect(unitCost("Blind Spot Side Mirrors", "Pack of 2 - For 1 Car")).toBe(50);
+    expect(unitCost("Blind Spot Side Mirrors", "Pack of 4 - For 2 Cars")).toBe(100);
     expect(unitCost("Mystery Item", null)).toBeNull();
   });
 

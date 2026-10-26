@@ -53,7 +53,16 @@ export const CATALOG: {
     name: "Blind Spot Side Mirrors",
     match: /blind spot/i,
     hsn: "7009", // 7009 10 00 — rear-view mirrors for vehicles (18%)
-    cost: (variant) => (/frameless/i.test(variant ?? "") ? 25 : /frame/i.test(variant ?? "") ? 50 : null),
+    // Older orders: Frameless ₹25, Black Frame (a pair) ₹50.
+    // From order #3411: framed only — "Pack of 2" ₹50, "Pack of 4" ₹100 (₹25 per mirror).
+    cost: (variant) => {
+      const v = variant ?? "";
+      const pack = Number(/pack\s*of\s*(\d+)/i.exec(v)?.[1] ?? NaN);
+      if (Number.isFinite(pack)) return pack * 25;
+      if (/frameless/i.test(v)) return 25;
+      if (/frame/i.test(v)) return 50;
+      return null;
+    },
   },
 ];
 
