@@ -75,6 +75,10 @@ COD orders still in transit are counted at the recent COD delivery rate; **Confi
 | Door Shock Absorbers | ₹7 per piece (8pc ₹56, 16pc ₹112) | 8708 |
 | Car Door Protector - Latch Cover | 4pcs ₹55, 8pcs ₹110 | 8708 |
 | Blind Spot Side Mirrors | Pack of 2 ₹50, Pack of 4 ₹100 (older orders: Frameless ₹25, Black Frame ₹50) | 7009 (rear-view mirrors for vehicles) |
+| Frameless Blind Spot Side Mirrors | Pack of 2 ₹25, Pack of 4 ₹50 | 7009 |
+| Car Seat Headrest Double Hook | Pack of 2 ₹50, Pack of 4 ₹100 | 3924 |
+
+**Packaging** is ₹10 per order, except when a product needs more: headrest hooks Pack of 2 ₹10, Pack of 4 ₹20 per pack — an order pays the larger of ₹10 and its hooks' packaging (Pack of 4 → ₹20, 2 × Pack of 2 → ₹20, Pack of 4 + Door Shock Absorbers → ₹20).
 
 **Adding a product:** add an entry to `CATALOG` in `lib/costs.ts` (Shopify name, a matching pattern, HSN, cost per unit), then add a column for it in the ad-spend sheet. Until a product is in the catalogue, the Profit tab shows a red "no product cost" warning for it.
 

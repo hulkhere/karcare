@@ -51,7 +51,9 @@ export const codeDescription = (code: string) =>
       ? "Retained COD advance (cancelled / RTO)"
       : code === "7009"
         ? "Rear-view mirrors for vehicles"
-        : "Motor vehicle parts & accessories";
+        : code === "3924"
+          ? "Household articles of plastics (car seat headrest hooks)"
+          : "Motor vehicle parts & accessories";
 
 /** HSN/SAC-wise totals — GSTR-1 Table 12. Line tax is pro-rated from its invoice's tax. */
 export function hsnRows(invoices: InvoiceData[]) {

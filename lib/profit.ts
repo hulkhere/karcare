@@ -1,4 +1,4 @@
-import { CATALOG, COSTS, exGst, unitCost } from "./costs";
+import { CATALOG, COSTS, exGst, orderPackaging, unitCost } from "./costs";
 import { istParts, monthRangeUTC } from "./dates";
 import { GST_RATE } from "./constants";
 import { allocate, fromPaise, toPaise } from "./gst";
@@ -99,7 +99,7 @@ function scenarios(o: Normalized) {
     freightIncl: COSTS.freight,
     codIncl: cod ? COSTS.codCharge : 0,
     gatewayIncl,
-    packagingIncl: COSTS.packaging,
+    packagingIncl: orderPackaging(o.lineItems),
   };
   // Returned to origin: goods come back to stock, but freight is paid both ways.
   const rto: Scenario = {
@@ -108,7 +108,7 @@ function scenarios(o: Normalized) {
     freightIncl: COSTS.freight * 2,
     codIncl: 0,
     gatewayIncl,
-    packagingIncl: COSTS.packaging,
+    packagingIncl: orderPackaging(o.lineItems),
   };
   // Cancelled before shipping: only the advance kept (COD) and the gateway fee.
   const cancelled: Scenario = {
@@ -157,8 +157,10 @@ export function matchProduct(name: string, titles: string[]): string | null {
   for (const t of titles) {
     const b = words(t);
     const shared = a.filter((w) => b.includes(w)).length;
+    // On a tie, prefer the closest name (fewest extra words):
+    // "Blind Spot Mirror" → "Blind Spot Side Mirrors", not "Frameless Blind Spot Side Mirrors"
     if (shared === a.length || shared === b.length) {
-      if (shared > bestScore) [best, bestScore] = [t, shared];
+      if (shared > bestScore || (shared === bestScore && best && b.length < words(best).length)) [best, bestScore] = [t, shared];
     }
   }
   return best;

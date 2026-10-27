@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { unitCost } from "../lib/costs";
+import { orderPackaging, unitCost } from "../lib/costs";
 import { normalize } from "../lib/orders";
 import { buildProfit, matchProduct } from "../lib/profit";
 import type { RawOrder } from "../lib/raw";
@@ -40,6 +40,28 @@ describe("unit costs", () => {
     expect(unitCost("Mystery Item", null)).toBeNull();
   });
 
+  it("headrest hooks and frameless mirrors", () => {
+    expect(unitCost("Car Seat Headrest Double Hook", "Pack of 2")).toBe(50);
+    expect(unitCost("Car Seat Headrest Double Hook", "Pack of 4 - Best Seller")).toBe(100);
+    expect(unitCost("Frameless Blind Spot Side Mirrors", "Pack of 2")).toBe(25);
+    expect(unitCost("Frameless Blind Spot Side Mirrors", "Pack of 4 - Bestseller")).toBe(50);
+    // framed mirrors unchanged
+    expect(unitCost("Blind Spot Side Mirrors", "Pack of 2 - For 1 Car")).toBe(50);
+    expect(unitCost("Blind Spot Side Mirrors", "Frameless")).toBe(25);
+  });
+
+  it("packaging: ₹10 per order, more when headrest hooks need it", () => {
+    const hook = (v: string, q = 1) => ({ title: "Car Seat Headrest Double Hook", variantTitle: v, quantity: q });
+    const shock = (q = 1) => ({ title: "Door Shock Absorbers", variantTitle: "16 Piece - Full Car (Recommended)", quantity: q });
+    expect(orderPackaging([shock()])).toBe(10);
+    expect(orderPackaging([shock(2)])).toBe(10);
+    expect(orderPackaging([hook("Pack of 2")])).toBe(10);
+    expect(orderPackaging([hook("Pack of 4 - Best Seller")])).toBe(20);
+    expect(orderPackaging([hook("Pack of 2", 2)])).toBe(20);
+    expect(orderPackaging([hook("Pack of 4 - Best Seller"), shock()])).toBe(20);
+    expect(orderPackaging([{ title: "Frameless Blind Spot Side Mirrors", variantTitle: "Pack of 4 - Bestseller", quantity: 1 }])).toBe(10);
+  });
+
   it("matches sheet column names to Shopify products word by word", () => {
     const titles = ["Door Shock Absorbers", "Car Door Protector - Latch Cover", "Blind Spot Side Mirrors"];
     expect(matchProduct("Blind Spot Mirror", titles)).toBe("Blind Spot Side Mirrors");
@@ -49,6 +71,10 @@ describe("unit costs", () => {
     expect(matchProduct("Door Shock Absorber", titles)).toBe("Door Shock Absorbers");
     expect(matchProduct("Door", titles)).toBe("Door Shock Absorbers"); // ambiguous → first full match; avoid one-word headers
     expect(matchProduct("Old campaign", titles)).toBeNull();
+    const withFrameless = ["Frameless Blind Spot Side Mirrors", ...titles, "Car Seat Headrest Double Hook"];
+    expect(matchProduct("Blind Spot Mirror", withFrameless)).toBe("Blind Spot Side Mirrors");
+    expect(matchProduct("Frameless Blind Spot Mirror", withFrameless)).toBe("Frameless Blind Spot Side Mirrors");
+    expect(matchProduct("Headrest Hook", withFrameless)).toBe("Car Seat Headrest Double Hook");
   });
 });
 
@@ -66,6 +92,12 @@ describe("order economics (cash incl. GST, then GST settled)", () => {
     expect(t.profit).toBe(r2(699 - 112 - 67.5 - 5.592 - 10 - (t.gstOutput - t.gstInput)));
     // same as the ex-GST view: 592.37 − 112 − 57.20 − 4.74 − 9.09
     expect(t.profit).toBeCloseTo(409.34, 1);
+  });
+
+  it("headrest hook Pack of 4 pays ₹20 packaging and ₹100 product cost", () => {
+    const t = run([order({ at: "2026-09-05T06:00:00Z", outcome: "delivered", title: "Car Seat Headrest Double Hook", variant: "Pack of 4 - Best Seller", total: 999 })]).totals;
+    expect(t.packaging).toBe(20);
+    expect(t.cogs).toBe(100);
   });
 
   it("COD delivered adds the ₹40 COD charge and the 1.2% partial-COD fee", () => {

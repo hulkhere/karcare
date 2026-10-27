@@ -193,6 +193,18 @@ describe("HSN per product", () => {
     const inv = buildMonth([r, order({ at: "2026-10-02T07:00:00Z" })], { month: 10, year: 2026 }).invoices;
     expect(inv.map((i) => i.lines[0].code)).toEqual(["7009", "8708"]);
   });
+
+  it("headrest hooks use 3924, frameless mirrors 7009", () => {
+    n = 9600;
+    const a = order({ at: "2026-10-26T06:00:00Z" });
+    a.lineItems[0].title = "Car Seat Headrest Double Hook";
+    a.lineItems[0].variantTitle = "Pack of 4 - Best Seller";
+    const b = order({ at: "2026-10-27T13:00:00Z" });
+    b.lineItems[0].title = "Frameless Blind Spot Side Mirrors";
+    b.lineItems[0].variantTitle = "Pack of 2";
+    const inv = buildMonth([a, b], { month: 10, year: 2026 }).invoices;
+    expect(inv.map((i) => i.lines[0].code)).toEqual(["3924", "7009"]);
+  });
 });
 
 describe("bulk export parsing", () => {

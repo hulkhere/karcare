@@ -36,6 +36,11 @@ export const CATALOG: {
   hsn: string;
   /** Cost of one unit of the given variant (ex-GST, no input credit). null = unknown variant. */
   cost: (variant: string | null, pieces: number) => number | null;
+  /**
+   * Packaging per unit (incl. GST), for products that need more than the standard ₹10 box.
+   * An order pays the larger of ₹10 and the sum of these.
+   */
+  packaging?: (variant: string | null) => number;
 }[] = [
   {
     name: "Door Shock Absorbers",
@@ -48,6 +53,16 @@ export const CATALOG: {
     match: /door protector|latch cover/i,
     hsn: "8708",
     cost: (_v, pieces) => (pieces === 4 ? 55 : pieces === 8 ? 110 : Number.isFinite(pieces) ? pieces * 13.75 : null),
+  },
+  {
+    // Separate product from 27 Oct 2026. Listed before the framed mirrors so it matches first.
+    name: "Frameless Blind Spot Side Mirrors",
+    match: /frameless blind spot/i,
+    hsn: "7009", // 7009 10 00 — rear-view mirrors for vehicles (18%)
+    cost: (variant) => {
+      const pack = Number(/pack\s*of\s*(\d+)/i.exec(variant ?? "")?.[1] ?? NaN);
+      return Number.isFinite(pack) ? pack * 12.5 : null; // Pack of 2 ₹25, Pack of 4 ₹50
+    },
   },
   {
     name: "Blind Spot Side Mirrors",
@@ -64,9 +79,31 @@ export const CATALOG: {
       return null;
     },
   },
+  {
+    name: "Car Seat Headrest Double Hook",
+    match: /headrest.*hook|hook.*headrest/i,
+    hsn: "3924",
+    cost: (variant) => {
+      const pack = Number(/pack\s*of\s*(\d+)/i.exec(variant ?? "")?.[1] ?? NaN);
+      return Number.isFinite(pack) ? pack * 25 : null; // Pack of 2 ₹50, Pack of 4 ₹100
+    },
+    packaging: (variant) => {
+      const pack = Number(/pack\s*of\s*(\d+)/i.exec(variant ?? "")?.[1] ?? NaN);
+      return Number.isFinite(pack) ? pack * 5 : COSTS.packaging; // Pack of 2 ₹10, Pack of 4 ₹20
+    },
+  },
 ];
 
 export const catalogEntry = (title: string) => CATALOG.find((c) => c.match.test(title));
+
+/**
+ * Packaging for one order (incl. GST): the standard ₹10 box, or more when its products need it
+ * (e.g. headrest hooks: Pack of 4 ₹20, 2 × Pack of 2 ₹20).
+ */
+export function orderPackaging(lines: { title: string; variantTitle: string | null; quantity: number }[]) {
+  const special = lines.reduce((sum, l) => sum + (catalogEntry(l.title)?.packaging?.(l.variantTitle) ?? 0) * l.quantity, 0);
+  return Math.max(COSTS.packaging, special);
+}
 
 /** Cost of goods per unit, by product and variant. Returns null if unknown. */
 export function unitCost(title: string, variant: string | null): number | null {
