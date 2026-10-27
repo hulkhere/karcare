@@ -47,6 +47,8 @@ export interface ProfitRow extends Pnl, Counts {
   key: string; // day (YYYY-MM-DD) or product title
   /** Profit from orders whose outcome is known (pending COD excluded), after all ads */
   confirmedProfit: number;
+  /** Day rows only: final profit per product that day (after GST and that product's ads) */
+  byProduct?: Record<string, number>;
 }
 
 export interface ProfitData {
@@ -250,6 +252,7 @@ export function buildProfit(
     }
 
     const day = row(days, dayOf(o.createdAt));
+    const dayProducts = (day.byProduct ??= {});
     const counted = new Set<ProfitRow>();
     const addCounts = (r: ProfitRow, units: number) => {
       r.units += units;
@@ -265,6 +268,7 @@ export function buildProfit(
       const ln = lines[i];
       const netGst = ln.gstOutput - ln.gstInput;
       const profit = ln.collected - ln.cogs - ln.shipping - ln.gateway - ln.packaging - netGst;
+      dayProducts[l.title] = (dayProducts[l.title] ?? 0) + profit;
       for (const r of [day, row(products, l.title), totals]) {
         r.collected += ln.collected;
         r.cogs += ln.cogs;
@@ -290,6 +294,10 @@ export function buildProfit(
     const title = matchProduct(a.product, titles);
     // You pay spend + 18% GST; the GST comes back as input credit, so profit drops by the spend.
     const gst = a.spend * (COSTS.adsGstRate / 100);
+    if (title) {
+      const bp = (row(days, a.date).byProduct ??= {});
+      bp[title] = (bp[title] ?? 0) - a.spend;
+    }
     for (const r of [row(days, a.date), title ? row(products, title) : null, totals]) {
       if (!r) continue;
       r.adSpend += a.spend;
@@ -318,7 +326,12 @@ export function buildProfit(
     deliveryRate: p,
     deliveryRateSample: sample,
     totals: round(totals),
-    days: [...days.values()].sort((a, b) => a.key.localeCompare(b.key)).map(round),
+    days: [...days.values()]
+      .sort((a, b) => a.key.localeCompare(b.key))
+      .map((d) => ({
+        ...round(d),
+        byProduct: Object.fromEntries(Object.entries(d.byProduct ?? {}).map(([k, v]) => [k, r2(v)])),
+      })),
     products: [...products.values()].sort((a, b) => b.collected - a.collected).map(round),
     gst: {
       output: r2(totals.gstOutput),

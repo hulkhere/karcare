@@ -53,7 +53,7 @@ To number invoices in order, the app counts every order since the start of the s
 - **Orders** – orders placed in the month plus earlier orders paid in it, with delivery status and invoice number. Filters: search (order #, invoice #, customer, city, AWB), invoice status, payment, delivery status, state; delivery-status chips filter too.
 - **CA Export** – the standard rules with counts, the month's number range, and one button that downloads a ZIP for the CA: all invoices in one PDF, each invoice as its own PDF, invoice register, state-wise and HSN summaries (CSV).
 - **GST Summary** – state-wise and HSN totals for GSTR-1 (filter: prepaid / COD delivered / advances retained), plus orders not invoiced this month and why.
-- **Profit** – cash collected, every cost as paid, GST payable / input credit / net GST, and profit in pocket — overall, by product and by day.
+- **Profit** – cash collected, every cost as paid, GST payable / input credit / net GST, and profit in pocket — overall, by product and by day. The day-by-day table also shows each product's final profit per day (after GST and that product's ad spend).
 - **Insights** – orders placed, prepaid vs COD, delivered / RTO / cancelled with RTO rate, orders per product, and GST per product.
 
 ## Profit

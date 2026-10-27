@@ -18,6 +18,9 @@ const thL = `${thBase} text-left`;
 const td = "whitespace-nowrap px-3 py-2.5 text-right tabular-nums";
 const tone = (n: number) => (n < 0 ? "text-rose-700" : "text-emerald-700");
 
+/** "Car Door Protector - Latch Cover" → "Car Door Protector" (column headers) */
+const shortName = (title: string) => title.split(" - ")[0];
+
 const sales = (t: ProfitRow) => t.collected - t.gstOutput; // sales ex-GST, for margins
 
 function Line({ label, value, base, strong, muted, bar = true }: {
@@ -322,7 +325,7 @@ function Profit() {
               <table className="min-w-full text-sm">
                 <thead className="border-b border-slate-100 bg-slate-50/70">
                   <tr>
-                    <th className={thL}>Date</th>
+                    <th className={`${thL} sticky left-0 z-10 bg-slate-50`}>Date</th>
                     <th className={th}>Orders</th>
                     <th className={th} title="Sold (delivered, or prepaid) · Returned · COD pending">Sold · RTO · Pend</th>
                     <th className={th}>Collected</th>
@@ -332,6 +335,15 @@ function Profit() {
                     <th className={th}>GST payable</th>
                     <th className={th}>GST credit</th>
                     <th className={th}>Net GST</th>
+                    {data.products.map((p) => (
+                      <th
+                        key={p.key}
+                        className={`${thBase} whitespace-normal text-right`}
+                        title={`${p.key}: final profit after GST and its own ad spend`}
+                      >
+                        {shortName(p.key)}
+                      </th>
+                    ))}
                     <th className={th}>Final profit (after GST)</th>
                     <th className={th} title="After net GST; pending COD orders left out">Confirmed (after GST)</th>
                   </tr>
@@ -339,7 +351,9 @@ function Profit() {
                 <tbody className="divide-y divide-slate-100">
                   {[...data.days].reverse().map((d) => (
                     <tr key={d.key} className="hover:bg-slate-50/60">
-                      <td className="whitespace-nowrap px-3 py-2.5 text-left font-medium">{formatDateIST(`${d.key}T06:30:00Z`)}</td>
+                      <td className="sticky left-0 z-10 whitespace-nowrap bg-white px-3 py-2.5 text-left font-medium">
+                        {formatDateIST(`${d.key}T06:30:00Z`)}
+                      </td>
                       <td className={td}>{d.orders}</td>
                       <td className={td}><Outcomes row={d} /></td>
                       <td className={td}>{r(d.collected)}</td>
@@ -349,12 +363,20 @@ function Profit() {
                       <td className={`${td} text-slate-500`}>{r(d.gstOutput)}</td>
                       <td className={`${td} text-slate-500`}>{r(d.gstInput)}</td>
                       <td className={td}>{r(d.netGst)}</td>
+                      {data.products.map((p) => {
+                        const v = d.byProduct?.[p.key];
+                        return (
+                          <td key={p.key} className={`${td} ${v === undefined ? "text-slate-300" : tone(v)}`}>
+                            {v === undefined ? "—" : r(v)}
+                          </td>
+                        );
+                      })}
                       <td className={`${td} font-semibold ${tone(d.profit)}`}>{r(d.profit)}</td>
                       <td className={`${td} text-slate-500`}>{r(d.confirmedProfit)}</td>
                     </tr>
                   ))}
                   <tr className="bg-slate-50 font-semibold">
-                    <td className="px-3 py-2.5">Total · final profit</td>
+                    <td className="sticky left-0 z-10 whitespace-nowrap bg-slate-50 px-3 py-2.5">Total · final profit</td>
                     <td className={td}>{t.orders}</td>
                     <td className={td}><Outcomes row={t} /></td>
                     <td className={td}>{r(t.collected)}</td>
@@ -364,6 +386,11 @@ function Profit() {
                     <td className={td}>{r(t.gstOutput)}</td>
                     <td className={td}>{r(t.gstInput)}</td>
                     <td className={td}>{r(t.netGst)}</td>
+                    {data.products.map((p) => (
+                      <td key={p.key} className={`${td} ${tone(p.profit)}`}>
+                        {r(p.profit)}
+                      </td>
+                    ))}
                     <td className={`${td} ${tone(t.profit)}`}>{r(t.profit)}</td>
                     <td className={td}>{r(t.confirmedProfit)}</td>
                   </tr>

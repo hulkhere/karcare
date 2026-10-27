@@ -155,6 +155,35 @@ describe("order economics (cash incl. GST, then GST settled)", () => {
     expect(d.gst.net).toBe(r2(d.gst.output - d.gst.input.total));
   });
 
+  it("day-by-day profit per product adds up to the day and to each product's month", () => {
+    const d = run(
+      [
+        order({ at: "2026-09-05T06:00:00Z", outcome: "delivered" }),
+        order({ at: "2026-09-05T07:00:00Z", cod: true, outcome: "rto" }),
+        order({ at: "2026-09-05T08:00:00Z", outcome: "delivered", title: "Car Door Protector - Latch Cover", variant: "4pcs - For 1 Car", total: 599 }),
+        order({ at: "2026-09-06T06:00:00Z", outcome: "delivered", title: "Blind Spot Side Mirrors", variant: "Pack of 4 - For 2 Cars", total: 999 }),
+      ],
+      {
+        configured: true,
+        error: null,
+        rows: [
+          { date: "2026-09-05", product: "Door Shock Absorbers", spend: 300 },
+          { date: "2026-09-06", product: "Blind Spot Mirror", spend: 200 },
+          { date: "2026-09-07", product: "Car Door Protector", spend: 100 }, // ads only, no orders
+        ],
+      },
+    );
+    for (const day of d.days) {
+      const sum = Object.values(day.byProduct ?? {}).reduce((a, b) => a + b, 0);
+      expect(sum).toBeCloseTo(day.profit, 1);
+    }
+    for (const p of d.products) {
+      const sum = d.days.reduce((a, day) => a + (day.byProduct?.[p.key] ?? 0), 0);
+      expect(sum).toBeCloseTo(p.profit, 1);
+    }
+    expect(d.days.find((x) => x.key === "2026-09-07")!.byProduct).toEqual({ "Car Door Protector - Latch Cover": -100 });
+  });
+
   it("orders count on the IST day they were placed", () => {
     const d = run([order({ at: "2026-09-05T19:00:00Z", outcome: "delivered" })]); // 6 Sep 00:30 IST
     expect(d.days.find((x) => x.key === "2026-09-06")!.orders).toBe(1);
