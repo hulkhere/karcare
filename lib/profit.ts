@@ -90,7 +90,7 @@ interface Scenario {
 function scenarios(o: Normalized) {
   const cod = o.paymentType === "COD";
   const gatewayIncl = o.total * (cod ? COSTS.gatewayPartialCod : COSTS.gatewayPrepaid);
-  const unitCosts = o.lineItems.map((l) => (unitCost(l.title, l.variantTitle) ?? 0) * l.quantity);
+  const unitCosts = o.lineItems.map((l) => (unitCost(l.title, l.variantTitle, o.createdAt) ?? 0) * l.quantity);
   const refunded = o.financialStatus === "REFUNDED";
   const zero = o.lineItems.map(() => 0);
   const delivered: Scenario = {

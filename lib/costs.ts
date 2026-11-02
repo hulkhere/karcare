@@ -26,6 +26,9 @@ export const COSTS = {
   adsGstRate: 18,
 };
 
+/** 31 Oct 2026 00:00 IST — Car Door Protector cost goes up for orders placed from here on. */
+const CAR_DOOR_PROTECTOR_NEW_COST_FROM = "2026-10-30T18:30:00.000Z";
+
 /**
  * Product catalogue. To add a product: add an entry here with its Shopify name,
  * a pattern that matches that name, its HSN code and its cost per unit sold.
@@ -34,8 +37,11 @@ export const CATALOG: {
   name: string;
   match: RegExp;
   hsn: string;
-  /** Cost of one unit of the given variant (ex-GST, no input credit). null = unknown variant. */
-  cost: (variant: string | null, pieces: number) => number | null;
+  /**
+   * Cost of one unit of the given variant (ex-GST, no input credit). null = unknown variant.
+   * `orderedAt` (ISO) lets a cost change from a given date.
+   */
+  cost: (variant: string | null, pieces: number, orderedAt?: string) => number | null;
   /**
    * Packaging per unit (incl. GST), for products that need more than the standard ₹10 box.
    * An order pays the larger of ₹10 and the sum of these.
@@ -52,7 +58,11 @@ export const CATALOG: {
     name: "Car Door Protector - Latch Cover",
     match: /door protector|latch cover/i,
     hsn: "8708",
-    cost: (_v, pieces) => (pieces === 4 ? 55 : pieces === 8 ? 110 : Number.isFinite(pieces) ? pieces * 13.75 : null),
+    // Orders placed from 31 Oct 2026 (IST): 4pcs ₹80, 8pcs ₹160. Before that: 4pcs ₹55, 8pcs ₹110.
+    cost: (_v, pieces, orderedAt) => {
+      const perPiece = orderedAt && orderedAt >= CAR_DOOR_PROTECTOR_NEW_COST_FROM ? 20 : 13.75;
+      return Number.isFinite(pieces) ? pieces * perPiece : null;
+    },
   },
   {
     // Separate product from 27 Oct 2026. Listed before the framed mirrors so it matches first.
@@ -105,10 +115,10 @@ export function orderPackaging(lines: { title: string; variantTitle: string | nu
   return Math.max(COSTS.packaging, special);
 }
 
-/** Cost of goods per unit, by product and variant. Returns null if unknown. */
-export function unitCost(title: string, variant: string | null): number | null {
+/** Cost of goods per unit, by product, variant and (for dated price changes) order date. Returns null if unknown. */
+export function unitCost(title: string, variant: string | null, orderedAt?: string): number | null {
   const pieces = Number(/(\d+)\s*(?:pc|pcs|piece|pieces)\b/i.exec(variant ?? "")?.[1] ?? NaN);
-  return catalogEntry(title)?.cost(variant, pieces) ?? null;
+  return catalogEntry(title)?.cost(variant, pieces, orderedAt) ?? null;
 }
 
 export const exGst = (inclusive: number, rate: number) => inclusive / (1 + rate / 100);

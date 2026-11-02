@@ -33,6 +33,11 @@ describe("unit costs", () => {
     expect(unitCost("Door Shock Absorbers", "8 Piece - Half Car")).toBe(56);
     expect(unitCost("Car Door Protector - Latch Cover", "4pcs - For 1 Car")).toBe(55);
     expect(unitCost("Car Door Protector - Latch Cover", "8pcs - For 2 Cars")).toBe(110);
+    // from 31 Oct 2026 (IST) the protector costs more
+    expect(unitCost("Car Door Protector - Latch Cover", "4pcs - For 1 Car", "2026-10-30T18:29:59Z")).toBe(55); // 30 Oct 23:59 IST
+    expect(unitCost("Car Door Protector - Latch Cover", "4pcs - For 1 Car", "2026-10-30T18:30:00Z")).toBe(80); // 31 Oct 00:00 IST
+    expect(unitCost("Car Door Protector - Latch Cover", "8pcs - For 2 Cars", "2026-11-02T10:00:00Z")).toBe(160);
+    expect(unitCost("Car Door Protector - Latch Cover", "8pcs - For 2 Cars", "2026-10-15T10:00:00Z")).toBe(110);
     expect(unitCost("Blind Spot Side Mirrors", "Frameless")).toBe(25);
     expect(unitCost("Blind Spot Side Mirrors", "Black Frame - Best Seller")).toBe(50);
     expect(unitCost("Blind Spot Side Mirrors", "Pack of 2 - For 1 Car")).toBe(50);

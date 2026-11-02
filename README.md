@@ -73,7 +73,7 @@ COD orders still in transit are counted at the recent COD delivery rate; **Confi
 | Shopify product | Cost per unit | HSN |
 |---|---|---|
 | Door Shock Absorbers | ₹7 per piece (8pc ₹56, 16pc ₹112) | 8708 |
-| Car Door Protector - Latch Cover | 4pcs ₹55, 8pcs ₹110 | 8708 |
+| Car Door Protector - Latch Cover | 4pcs ₹80, 8pcs ₹160 for orders placed from 31 Oct 2026 (before: ₹55 / ₹110) | 8708 |
 | Blind Spot Side Mirrors | Pack of 2 ₹50, Pack of 4 ₹100 (older orders: Frameless ₹25, Black Frame ₹50) | 7009 (rear-view mirrors for vehicles) |
 | Frameless Blind Spot Side Mirrors | Pack of 2 ₹25, Pack of 4 ₹50 | 7009 |
 | Car Seat Headrest Double Hook | Pack of 2 ₹50, Pack of 4 ₹100 | 3924 |
