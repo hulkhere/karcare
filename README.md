@@ -54,6 +54,7 @@ To number invoices in order, the app counts every order since the start of the s
 - **CA Export** – the standard rules with counts, the month's number range, and one button that downloads a ZIP for the CA: all invoices in one PDF, each invoice as its own PDF, invoice register, state-wise and HSN summaries (CSV).
 - **GST Summary** – state-wise and HSN totals for GSTR-1 (filter: prepaid / COD delivered / advances retained), plus orders not invoiced this month and why.
 - **Profit** – cash collected, every cost as paid, GST payable / input credit / net GST, and profit in pocket — overall, by product and by day. The day-by-day table also shows each product's final profit per day (after GST and that product's ad spend).
+- **Changes** – a dated log of every cost, selling-price, product, packaging, GST-code and rule change (filter by month for the monthly review), plus today's rates read live from `lib/costs.ts`. Add an entry to `lib/changelog.ts` with every such change.
 - **Insights** – orders placed, prepaid vs COD, delivered / RTO / cancelled with RTO rate, orders per product, and GST per product.
 
 ## Profit
