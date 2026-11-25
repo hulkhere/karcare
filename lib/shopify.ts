@@ -190,9 +190,19 @@ export interface SessionRow {
  */
 export async function fetchLandingSessions(fromDay: string, toDay: string): Promise<SessionRow[]> {
   const q = `FROM sessions SHOW sessions GROUP BY landing_page_path TIMESERIES day SINCE ${fromDay} UNTIL ${toDay}`;
-  const data = await shopifyGraphQL<{
-    shopifyqlQuery: { parseErrors: string[]; tableData: { rows: Record<string, string>[] } | null } | null;
-  }>(`query Sessions($q: String!) { shopifyqlQuery(query: $q) { parseErrors tableData { rows } } }`, { q });
+  type Result = { shopifyqlQuery: { parseErrors: string[]; tableData: { rows: Record<string, string>[] } | null } | null };
+  const run = () =>
+    shopifyGraphQL<Result>(`query Sessions($q: String!) { shopifyqlQuery(query: $q) { parseErrors tableData { rows } } }`, { q });
+  let data: Result;
+  try {
+    data = await run();
+  } catch (e) {
+    // A token issued before read_reports was approved keeps the old permissions until it expires
+    // (about a day) — get a fresh one and try once more.
+    if (process.env.SHOPIFY_ACCESS_TOKEN || !/access denied/i.test((e as Error).message)) throw e;
+    cachedToken = null;
+    data = await run();
+  }
   const r = data.shopifyqlQuery;
   if (!r) throw new Error("Shopify analytics returned nothing");
   if (r.parseErrors.length) throw new Error(`Shopify analytics: ${r.parseErrors.join("; ")}`);

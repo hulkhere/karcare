@@ -110,7 +110,10 @@ export function useProfitData() {
         range.future
           ? Promise.resolve<Sessions>({ available: false, error: null, needsPermission: false, rows: [] })
           : cached(`sessions:${range.from}:${range.to}`, 10 * 60_000, fresh, () =>
-              getJson<Sessions>(`/api/sessions?from=${range.from}&to=${range.to}`),
+              getJson<Sessions>(`/api/sessions?from=${range.from}&to=${range.to}`).then((r) => {
+                if (!r.available) memo.delete(`sessions:${range.from}:${range.to}`); // ask again next time
+                return r;
+              }),
             ).catch((e): Sessions => ({ available: false, error: (e as Error).message, needsPermission: false, rows: [] })),
       ]);
       setAds(a);
