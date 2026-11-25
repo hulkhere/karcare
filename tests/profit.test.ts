@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { orderPackaging, unitCost } from "../lib/costs";
+import { orderPackaging, productForPath, unitCost } from "../lib/costs";
 import { normalize } from "../lib/orders";
-import { buildProfit, matchProduct } from "../lib/profit";
+import { buildProfit, cvr, matchProduct, roas } from "../lib/profit";
+import { trendPoints } from "../lib/trend";
+import { mergeOrders } from "../lib/orderStore";
 import type { RawOrder } from "../lib/raw";
 import { parseAdSpend, parseAdSpendDetailed, parseDate } from "../lib/sheet";
 
@@ -211,14 +213,87 @@ describe("order economics (cash incl. GST, then GST settled)", () => {
       },
     );
     for (const day of d.days) {
-      const sum = Object.values(day.byProduct ?? {}).reduce((a, b) => a + b, 0);
+      const sum = Object.values(day.byProduct ?? {}).reduce((a, b) => a + b.profit, 0);
       expect(sum).toBeCloseTo(day.profit, 1);
     }
     for (const p of d.products) {
-      const sum = d.days.reduce((a, day) => a + (day.byProduct?.[p.key] ?? 0), 0);
+      const sum = d.days.reduce((a, day) => a + (day.byProduct?.[p.key]?.profit ?? 0), 0);
       expect(sum).toBeCloseTo(p.profit, 1);
     }
-    expect(d.days.find((x) => x.key === "2026-09-07")!.byProduct).toEqual({ "Car Door Protector - Latch Cover": -100 });
+    expect(d.days.find((x) => x.key === "2026-09-07")!.byProduct).toEqual({
+      "Car Door Protector - Latch Cover": { profit: -100, collected: 0, adSpend: 100, orders: 0, sessions: null },
+    });
+  });
+
+  it("per product per day: ROAS from the sheet's spend, CVR from product page visits", () => {
+    const sheet = {
+      configured: true,
+      error: null,
+      rows: [{ date: "2026-09-05", product: "Door Shock Absorbers", spend: 250 }],
+    };
+    const raws = [
+      order({ at: "2026-09-05T06:00:00Z", outcome: "delivered" }),
+      order({ at: "2026-09-05T07:00:00Z", outcome: "delivered" }),
+      order({ at: "2026-09-05T08:00:00Z", outcome: "delivered", title: "Car Door Protector - Latch Cover", variant: "4pcs - For 1 Car", total: 599 }),
+    ];
+    const sessions = {
+      available: true,
+      error: null,
+      rows: [
+        { date: "2026-09-05", product: "Door Shock Absorbers", sessions: 80 },
+        { date: "2026-09-05", product: "Car Door Protector - Latch Cover", sessions: 50 },
+        { date: "2026-09-05", product: "Frameless Blind Spot Side Mirrors", sessions: 20 }, // no orders this month
+        { date: "2026-10-01", product: "Door Shock Absorbers", sessions: 999 }, // other month
+      ],
+    };
+    const d = buildProfit(raws.map(normalize), SEP, sheet, { now: NOW, sessions });
+    const day = d.days.find((x) => x.key === "2026-09-05")!;
+    const shock = day.byProduct!["Door Shock Absorbers"];
+    expect(shock.orders).toBe(2);
+    expect(shock.collected).toBe(1398);
+    expect(shock.adSpend).toBe(250);
+    expect(shock.sessions).toBe(80);
+    expect(roas(shock.collected, shock.adSpend)).toBeCloseTo(5.592, 3);
+    expect(cvr(shock.orders, shock.sessions)).toBe(0.025);
+    // no spend entered → ROAS unknown, not zero
+    const prot = day.byProduct!["Car Door Protector - Latch Cover"];
+    expect(roas(prot.collected, prot.adSpend)).toBeNull();
+    expect(cvr(prot.orders, prot.sessions)).toBe(0.02);
+    // day and month totals include every product page; product rows only products with orders or ads
+    expect(day.sessions).toBe(150);
+    expect(d.totals.sessions).toBe(150);
+    expect(d.products.map((p) => p.key).sort()).toEqual(["Car Door Protector - Latch Cover", "Door Shock Absorbers"]);
+    expect(d.products.find((p) => p.key === "Door Shock Absorbers")!.sessions).toBe(80);
+    // other days of the month had no visits recorded → 0, not unknown
+    expect(d.days.find((x) => x.key === "2026-09-06")!.sessions).toBe(0);
+    expect(d.sessions).toEqual({ available: true, error: null, needsPermission: false });
+  });
+
+  it("without visit data, CVR stays unknown", () => {
+    const d = run([order({ at: "2026-09-05T06:00:00Z", outcome: "delivered" })]);
+    const shock = d.days.find((x) => x.key === "2026-09-05")!.byProduct!["Door Shock Absorbers"];
+    expect(shock.sessions).toBeNull();
+    expect(cvr(shock.orders, shock.sessions)).toBeNull();
+    expect(d.sessions.available).toBe(false);
+  });
+
+  it("trend: complete days only, per product or all", () => {
+    const d = buildProfit(
+      [
+        order({ at: "2026-09-26T06:00:00Z", outcome: "delivered" }),
+        order({ at: "2026-09-27T06:00:00Z", outcome: "delivered", title: "Car Door Protector - Latch Cover", variant: "4pcs - For 1 Car", total: 599 }),
+        order({ at: "2026-09-28T06:00:00Z", outcome: "delivered" }), // today — left out
+      ].map(normalize),
+      SEP,
+      { configured: true, error: null, rows: [{ date: "2026-09-26", product: "Door Shock Absorbers", spend: 233 }] },
+      { now: NOW, sessions: { available: true, error: null, rows: [{ date: "2026-09-26", product: "Door Shock Absorbers", sessions: 50 }] } },
+    );
+    const all = trendPoints(d.days, null, "2026-09-28");
+    expect(all.at(-1)!.day).toBe("2026-09-27");
+    expect(all.find((p) => p.day === "2026-09-26")).toMatchObject({ revenue: 699, adSpend: 233, roas: 3, orders: 1, sessions: 50, cvr: 0.02 });
+    const shock = trendPoints(d.days, "Door Shock Absorbers", "2026-09-28");
+    // a day this product had no orders: revenue 0, visits known to be 0 → CVR unknown, ROAS unknown
+    expect(shock.find((p) => p.day === "2026-09-27")).toMatchObject({ revenue: 0, orders: 0, sessions: 0, cvr: null, roas: null });
   });
 
   it("orders count on the IST day they were placed", () => {
@@ -276,5 +351,29 @@ describe("sheet parsing", () => {
     const r = parseAdSpendDetailed(csv, new Date("2026-09-29T06:00:00Z"));
     expect(r.rows).toHaveLength(2);
     expect(r.skipped).toEqual(["27/09/2027 (future date — check the year)", "28/09/2028 (future date — check the year)"]);
+  });
+});
+
+describe("saved orders", () => {
+  it("changed orders replace the saved copy by id; new ones are added", () => {
+    const a = order({ at: "2026-09-05T06:00:00Z", cod: true, outcome: "transit" });
+    const b = order({ at: "2026-09-06T06:00:00Z", outcome: "delivered" });
+    const aDelivered = { ...a, fulfillments: [{ ...a.fulfillments[0], displayStatus: "DELIVERED", deliveredAt: "2026-09-09T06:00:00Z" }] };
+    const c = order({ at: "2026-09-10T06:00:00Z", outcome: "delivered" });
+    const merged = mergeOrders([a, b], [aDelivered, c]);
+    expect(merged.map((o) => o.id)).toEqual([a.id, b.id, c.id]);
+    expect(merged[0].fulfillments[0].displayStatus).toBe("DELIVERED");
+    expect(mergeOrders([a], [])).toEqual([a]);
+  });
+});
+
+describe("product pages", () => {
+  it("landing page path → product (for CVR)", () => {
+    expect(productForPath("/products/car-door-shock-absorbers")).toBe("Door Shock Absorbers");
+    expect(productForPath("/collections/all/products/blind-spot-side-mirrors?variant=1")).toBe("Blind Spot Side Mirrors");
+    expect(productForPath("/products/frameless-blind-spot-side-mirrors")).toBe("Frameless Blind Spot Side Mirrors");
+    expect(productForPath("/products/car-door-lock-protector-cover")).toBe("Car Door Protector - Latch Cover");
+    expect(productForPath("/")).toBeNull();
+    expect(productForPath("/products/something-else")).toBeNull();
   });
 });

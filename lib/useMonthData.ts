@@ -1,136 +1,152 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { currentMonthIST, previousMonth } from "./dates";
-import { seriesStartFor } from "./orders";
-import type { MonthData } from "./types";
+import { buildMonth, normalize, seriesStartFor } from "./orders";
+import { useOrderStore } from "./orderStore";
+import { buildProfit, type AdRow, type ProfitData, type SessionRow } from "./profit";
 
-type Phase = "exporting" | "loading" | "ready" | "error";
-
-const REUSE_MINUTES = 30;
-const storeKey = (series: string) => `kc:export:${series}`;
-
-function readExport(series: string): { id: string; at: number } | null {
-  try {
-    const v = JSON.parse(sessionStorage.getItem(storeKey(series)) || "null");
-    return v && Date.now() - v.at < REUSE_MINUTES * 60_000 ? v : null;
-  } catch {
-    return null;
-  }
-}
-function writeExport(series: string, id: string | null) {
-  try {
-    if (id) sessionStorage.setItem(storeKey(series), JSON.stringify({ id, at: Date.now() }));
-    else sessionStorage.removeItem(storeKey(series));
-  } catch {
-    /* ignore */
-  }
-}
-
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
-
-async function json<T>(res: Response): Promise<T> {
-  const body = await res.json();
-  if (!res.ok) throw Object.assign(new Error(body.error ?? `Request failed (${res.status})`), { busy: body.busy });
-  return body;
+/** What the pages need to show loading, freshness and errors (see components/LoadState). */
+export interface SyncInfo {
+  /** First load: nothing saved in this browser yet */
+  firstLoad: boolean;
+  /** A refresh is running in the background */
+  syncing: boolean;
+  /** The running sync downloads everything (first load / "Reload everything") */
+  full: boolean;
+  phase: "idle" | "exporting" | "downloading";
+  progress: number;
+  error: string | null;
+  syncedAt: string | null;
+  refresh: () => void;
+  rebuild: () => void;
 }
 
 /**
- * Month/year live in the URL (?month=&year=) so tabs stay in sync.
- * Data comes from one Shopify bulk export per invoice series (financial year), reused for
- * 30 minutes across tabs and months; "Refresh" pulls a fresh export.
+ * Month/year live in the URL (?month=&year=) so tabs stay in sync. Orders for the whole invoice
+ * series come from the browser's saved copy (lib/orderStore) and are refreshed in the background
+ * with only what changed; each tab computes its view locally, so switching tabs and months is instant.
  */
-export function useMonthData<T extends { month: number; year: number } = MonthData>({
-  defaultToPrevious = false,
-  endpoint = "/api/month",
-} = {}) {
+function useSeries(defaultToPrevious: boolean) {
   const params = useSearchParams();
   const router = useRouter();
   const fallback = defaultToPrevious ? previousMonth(currentMonthIST()) : currentMonthIST();
   const month = Number(params.get("month")) || fallback.month;
   const year = Number(params.get("year")) || fallback.year;
   const s = seriesStartFor({ month, year });
-  const series = `${s.year}-${s.month}`;
+  const store = useOrderStore(`${s.year}-${s.month}`, { month, year });
+  const setMonthYear = (m: number, y: number) => router.replace(`?month=${m}&year=${y}`, { scroll: false });
+  const sync: SyncInfo = {
+    firstLoad: !store.snapshot,
+    syncing: store.syncing || !store.loaded,
+    full: store.full,
+    phase: store.phase,
+    progress: store.progress,
+    error: store.error,
+    syncedAt: store.snapshot?.syncedAt ?? null,
+    refresh: () => void store.refresh(),
+    rebuild: () => void store.rebuild(),
+  };
+  return { month, year, setMonthYear, snapshot: store.snapshot, sync };
+}
 
-  const [data, setData] = useState<T | null>(null);
-  const [phase, setPhase] = useState<Phase>("loading");
-  const [progress, setProgress] = useState(0);
-  const [error, setError] = useState<string | null>(null);
-  const run = useRef(0);
+export function useMonthData({ defaultToPrevious = false } = {}) {
+  const { month, year, setMonthYear, snapshot, sync } = useSeries(defaultToPrevious);
+  const data = useMemo(
+    () => (snapshot ? buildMonth(snapshot.orders, { month, year }, { syncedAt: snapshot.syncedAt }) : null),
+    [snapshot, month, year],
+  );
+  return { month, year, setMonthYear, data, sync, loading: sync.syncing, refresh: sync.refresh };
+}
 
-  const load = useCallback(
+// ---------- Profit: ad spend sheet + product page visits, cached briefly ----------
+
+type Ads = { rows: AdRow[]; configured: boolean; error: string | null; skipped?: string[] };
+type Sessions = { available: boolean; error: string | null; needsPermission: boolean; rows: SessionRow[] };
+
+const memo = new Map<string, { at: number; p: Promise<unknown> }>();
+function cached<T>(key: string, ttlMs: number, fresh: boolean, load: () => Promise<T>): Promise<T> {
+  const hit = memo.get(key);
+  if (!fresh && hit && Date.now() - hit.at < ttlMs) return hit.p as Promise<T>;
+  const p = load();
+  memo.set(key, { at: Date.now(), p });
+  p.catch(() => memo.delete(key));
+  return p;
+}
+const getJson = async <T,>(url: string): Promise<T> => {
+  const res = await fetch(url, { cache: "no-store" });
+  const body = await res.json();
+  if (!res.ok) throw new Error(body.error ?? `Request failed (${res.status})`);
+  return body;
+};
+
+const day = (d: Date) => d.toISOString().slice(0, 10);
+
+/** Visits for the month so far, as IST days. */
+function sessionsRange(month: number, year: number) {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const from = `${year}-${pad(month)}-01`;
+  const last = new Date(Date.UTC(year, month, 0)); // last day of the month
+  const today = day(new Date(Date.now() + 5.5 * 3600_000)); // IST
+  const to = day(last) < today ? day(last) : today;
+  return { from, to, future: from > today };
+}
+
+export function useProfitData() {
+  const { month, year, setMonthYear, snapshot, sync } = useSeries(false);
+  const [ads, setAds] = useState<Ads | null>(null);
+  const [sessions, setSessions] = useState<Sessions | null>(null);
+  const [extrasLoading, setExtrasLoading] = useState(false);
+
+  const loadExtras = useCallback(
     async (fresh: boolean) => {
-      const token = ++run.current;
-      const alive = () => token === run.current;
-      setError(null);
-      try {
-        let id = fresh ? null : readExport(series)?.id ?? null;
-        if (!id) {
-          setPhase("exporting");
-          setProgress(0);
-          for (let attempt = 0; ; attempt++) {
-            try {
-              ({ id } = await json<{ id: string }>(
-                await fetch("/api/sync", {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({ month, year }),
-                }),
-              ));
-              break;
-            } catch (e) {
-              if (!(e as { busy?: boolean }).busy || attempt > 20) throw e;
-              await sleep(3000);
-              if (!alive()) return;
-            }
-          }
-          for (;;) {
-            const st = await json<{ status: string; objectCount: number; errorCode: string | null }>(
-              await fetch(`/api/sync?id=${encodeURIComponent(id!)}`, { cache: "no-store" }),
-            );
-            if (!alive()) return;
-            setProgress(st.objectCount);
-            if (st.status === "COMPLETED") break;
-            if (!["CREATED", "RUNNING"].includes(st.status)) {
-              throw new Error(`Shopify export ${st.status.toLowerCase()}${st.errorCode ? ` (${st.errorCode})` : ""}`);
-            }
-            await sleep(2000);
-          }
-          writeExport(series, id);
-        }
-        setPhase("loading");
-        const md = await json<T>(
-          await fetch(`${endpoint}?id=${encodeURIComponent(id!)}&month=${month}&year=${year}`, { cache: "no-store" }),
-        );
-        if (!alive()) return;
-        setData(md);
-        setPhase("ready");
-      } catch (e) {
-        if (!alive()) return;
-        writeExport(series, null);
-        setError((e as Error).message);
-        setPhase("error");
-      }
+      setExtrasLoading(true);
+      const range = sessionsRange(month, year);
+      const [a, s] = await Promise.all([
+        cached("ads", 2 * 60_000, fresh, () => getJson<Ads>("/api/adspend")).catch(
+          (e): Ads => ({ rows: [], configured: true, error: (e as Error).message }),
+        ),
+        range.future
+          ? Promise.resolve<Sessions>({ available: false, error: null, needsPermission: false, rows: [] })
+          : cached(`sessions:${range.from}:${range.to}`, 10 * 60_000, fresh, () =>
+              getJson<Sessions>(`/api/sessions?from=${range.from}&to=${range.to}`),
+            ).catch((e): Sessions => ({ available: false, error: (e as Error).message, needsPermission: false, rows: [] })),
+      ]);
+      setAds(a);
+      setSessions(s);
+      setExtrasLoading(false);
     },
-    [month, year, series, endpoint],
+    [month, year],
   );
 
   useEffect(() => {
-    void load(false);
-  }, [load]);
+    void loadExtras(false);
+  }, [loadExtras]);
 
-  const setMonthYear = (m: number, y: number) => router.replace(`?month=${m}&year=${y}`, { scroll: false });
-  const current = data && data.month === month && data.year === year ? data : null;
+  const normalized = useMemo(() => snapshot?.orders.map(normalize) ?? null, [snapshot]);
+  const data: ProfitData | null = useMemo(
+    () =>
+      normalized && ads
+        ? buildProfit(normalized, { month, year }, ads, {
+            syncedAt: snapshot!.syncedAt,
+            sessions: sessions ?? undefined,
+          })
+        : null,
+    [normalized, ads, sessions, month, year, snapshot],
+  );
+
+  const refresh = () => {
+    sync.refresh();
+    void loadExtras(true);
+  };
   return {
     month,
     year,
     setMonthYear,
-    data: current,
-    phase,
-    progress,
-    loading: phase === "exporting" || phase === "loading",
-    error,
-    refresh: () => load(true),
+    data,
+    sync: { ...sync, refresh, syncing: sync.syncing || extrasLoading },
+    loading: sync.syncing || extrasLoading,
+    refresh,
   };
 }

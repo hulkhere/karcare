@@ -24,7 +24,7 @@ const DOT: Record<string, string> = {
 };
 
 function Orders() {
-  const { month, year, setMonthYear, data, phase, progress, loading, error, refresh } = useMonthData();
+  const { month, year, setMonthYear, data, sync, loading, refresh } = useMonthData();
   const [search, setSearch] = useState("");
   const [payment, setPayment] = useState<"all" | "Prepaid" | "COD">("all");
   const [delivery, setDelivery] = useState("all");
@@ -74,7 +74,7 @@ function Orders() {
         <MonthPicker month={month} year={year} onChange={setMonthYear} onRefresh={refresh} loading={loading} />
       </PageHeader>
 
-      <LoadState phase={phase} progress={progress} error={error} month={month} year={year} onRetry={refresh} hasData={!!data} />
+      <LoadState sync={sync} />
 
       {data && (
         <>

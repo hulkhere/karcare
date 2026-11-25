@@ -37,6 +37,8 @@ export const CATALOG: {
   name: string;
   match: RegExp;
   hsn: string;
+  /** Shopify product page handle (/products/<handle>) — used to match store visits for CVR */
+  handle: string;
   /**
    * Cost of one unit of the given variant (ex-GST, no input credit). null = unknown variant.
    * `orderedAt` (ISO) lets a cost change from a given date.
@@ -50,12 +52,14 @@ export const CATALOG: {
 }[] = [
   {
     name: "Door Shock Absorbers",
+    handle: "car-door-shock-absorbers",
     match: /door shock absorber/i,
     hsn: "8708",
     cost: (_v, pieces) => (Number.isFinite(pieces) ? pieces * 7 : null), // ₹7 per piece: 8pc ₹56, 16pc ₹112
   },
   {
     name: "Car Door Protector - Latch Cover",
+    handle: "car-door-lock-protector-cover",
     match: /door protector|latch cover/i,
     hsn: "8708",
     // Orders placed from 31 Oct 2026 (IST): 4pcs ₹80, 8pcs ₹160. Before that: 4pcs ₹55, 8pcs ₹110.
@@ -67,6 +71,7 @@ export const CATALOG: {
   {
     // Separate product from 27 Oct 2026. Listed before the framed mirrors so it matches first.
     name: "Frameless Blind Spot Side Mirrors",
+    handle: "frameless-blind-spot-side-mirrors",
     match: /frameless blind spot/i,
     hsn: "7009", // 7009 10 00 — rear-view mirrors for vehicles (18%)
     cost: (variant) => {
@@ -76,6 +81,7 @@ export const CATALOG: {
   },
   {
     name: "Blind Spot Side Mirrors",
+    handle: "blind-spot-side-mirrors",
     match: /blind spot/i,
     hsn: "7009", // 7009 10 00 — rear-view mirrors for vehicles (18%)
     // Older orders: Frameless ₹25, Black Frame (a pair) ₹50.
@@ -91,6 +97,7 @@ export const CATALOG: {
   },
   {
     name: "Car Seat Headrest Double Hook",
+    handle: "car-seat-headrest-double-hook",
     match: /headrest.*hook|hook.*headrest/i,
     hsn: "3924",
     cost: (variant) => {
@@ -105,6 +112,12 @@ export const CATALOG: {
 ];
 
 export const catalogEntry = (title: string) => CATALOG.find((c) => c.match.test(title));
+
+/** Product name for a landing page path like /products/car-door-shock-absorbers (or /collections/x/products/…). */
+export function productForPath(path: string): string | null {
+  const handle = /\/products\/([^/?#]+)/.exec(path)?.[1];
+  return (handle && CATALOG.find((c) => c.handle === handle)?.name) || null;
+}
 
 /**
  * Packaging for one order (incl. GST): the standard ₹10 box, or more when its products need it

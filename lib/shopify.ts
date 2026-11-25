@@ -5,13 +5,13 @@ const API_VERSION = process.env.SHOPIFY_API_VERSION || "2026-07";
 import { assembleJsonl, type RawOrder } from "./raw";
 
 /**
- * Everything the app needs per order. Runs as a Shopify bulk export (no rate limits).
+ * Everything the app needs per order. A full load runs as a Shopify bulk export (no rate limits);
+ * quick refreshes page through only the orders changed since the last sync.
  * Bulk exports can't include a connection inside a list, so fulfillment events are
- * fetched separately (see fetchFailureDates).
+ * fetched separately (see fetchFulfillmentEvents).
  */
-const bulkOrdersQuery = (from: Date, to: Date) => `{
-  orders(query: "created_at:>='${from.toISOString()}' created_at:<'${to.toISOString()}'") {
-    edges { node {
+/** Order fields. `paged` adds the `first:` limits a normal (non-bulk) query needs on connections. */
+const orderFields = (paged: boolean) => `
       id name createdAt cancelledAt test displayFinancialStatus paymentGatewayNames tags
       totalPriceSet { shopMoney { amount } }
       totalTaxSet { shopMoney { amount } }
@@ -20,11 +20,18 @@ const bulkOrdersQuery = (from: Date, to: Date) => `{
       billingAddress { firstName lastName city province provinceCode }
       refunds { createdAt }
       transactions { kind status gateway amountSet { shopMoney { amount } } }
-      shippingLines { edges { node { id discountedPriceSet { shopMoney { amount } } } } }
-      lineItems { edges { node { id title variantTitle quantity sku
+      shippingLines${paged ? "(first: 3)" : ""} { edges { node { id discountedPriceSet { shopMoney { amount } } } } }
+      lineItems${paged ? "(first: 25)" : ""} { ${paged ? "pageInfo { hasNextPage } " : ""}edges { node { id title variantTitle quantity sku
         originalUnitPriceSet { shopMoney { amount } } discountedTotalSet { shopMoney { amount } } } } }
       fulfillments { id status displayStatus deliveredAt updatedAt createdAt
-        trackingInfo { number company url } }
+        trackingInfo { number company url } }`;
+
+const ordersFilter = (from: Date, to: Date, since?: Date) =>
+  `created_at:>='${from.toISOString()}' created_at:<'${to.toISOString()}'${since ? ` updated_at:>='${since.toISOString()}'` : ""}`;
+
+const bulkOrdersQuery = (from: Date, to: Date, since?: Date) => `{
+  orders(query: "${ordersFilter(from, to, since)}") {
+    edges { node { ${orderFields(false)}
     } }
   }
 }`;
@@ -120,13 +127,16 @@ export interface BulkStatus {
   url: string | null;
 }
 
-/** Start a bulk export of orders created in [from, to). Returns the operation id. */
-export async function startOrdersExport(from: Date, to: Date): Promise<string> {
+/**
+ * Start a bulk export of orders created in [from, to). With `since`, only orders changed
+ * since then (new orders and status updates — a delivery or RTO updates the order too).
+ */
+export async function startOrdersExport(from: Date, to: Date, since?: Date): Promise<string> {
   const data = await shopifyGraphQL<{
     bulkOperationRunQuery: { bulkOperation: { id: string } | null; userErrors: { message: string }[] };
   }>(
     `mutation Run($q: String!) { bulkOperationRunQuery(query: $q) { bulkOperation { id status } userErrors { field message } } }`,
-    { q: bulkOrdersQuery(from, to) },
+    { q: bulkOrdersQuery(from, to, since) },
   );
   const { bulkOperation, userErrors } = data.bulkOperationRunQuery;
   if (!bulkOperation) throw new Error(userErrors.map((e) => e.message).join("; ") || "Couldn't start the export");
@@ -166,4 +176,71 @@ export async function fetchFulfillmentEvents(ids: string[]) {
     for (const n of data.nodes) if (n?.events) out.set(n.id, n.events.nodes);
   }
   return out;
+}
+
+export interface SessionRow {
+  date: string; // YYYY-MM-DD (store time zone, IST)
+  path: string;
+  sessions: number;
+}
+
+/**
+ * Visits per landing page per day from Shopify analytics (needs the read_reports permission).
+ * Checkout runs on Fastrr, so Shopify can't see conversions itself — the app divides orders by these.
+ */
+export async function fetchLandingSessions(fromDay: string, toDay: string): Promise<SessionRow[]> {
+  const q = `FROM sessions SHOW sessions GROUP BY landing_page_path TIMESERIES day SINCE ${fromDay} UNTIL ${toDay}`;
+  const data = await shopifyGraphQL<{
+    shopifyqlQuery: { parseErrors: string[]; tableData: { rows: Record<string, string>[] } | null } | null;
+  }>(`query Sessions($q: String!) { shopifyqlQuery(query: $q) { parseErrors tableData { rows } } }`, { q });
+  const r = data.shopifyqlQuery;
+  if (!r) throw new Error("Shopify analytics returned nothing");
+  if (r.parseErrors.length) throw new Error(`Shopify analytics: ${r.parseErrors.join("; ")}`);
+  return (r.tableData?.rows ?? []).map((row) => ({
+    date: String(row.day).slice(0, 10),
+    path: String(row.landing_page_path ?? ""),
+    sessions: Number(row.sessions) || 0,
+  }));
+}
+
+type Edges<T> = { edges: { node: T }[] };
+type PagedOrder = Omit<RawOrder, "lineItems" | "shippingLines" | "fulfillments"> & {
+  lineItems: Edges<RawOrder["lineItems"][number]> & { pageInfo: { hasNextPage: boolean } };
+  shippingLines: Edges<RawOrder["shippingLines"][number]>;
+  fulfillments: Omit<RawOrder["fulfillments"][number], "events">[];
+};
+
+/**
+ * Orders created in [from, to) and changed since `since`, via normal paged queries — a second or two
+ * for the handful of orders that change between visits. Returns null when there are more than
+ * `maxOrders` (or an order has too many lines), so the caller falls back to a bulk export.
+ */
+export async function fetchChangedOrders(from: Date, to: Date, since: Date, maxOrders = 200): Promise<RawOrder[] | null> {
+  const out: RawOrder[] = [];
+  let after: string | null = null;
+  for (;;) {
+    const data: {
+      orders: { pageInfo: { hasNextPage: boolean; endCursor: string | null }; nodes: PagedOrder[] };
+    } = await shopifyGraphQL(
+      `query Changed($q: String!, $after: String) {
+        orders(first: 20, after: $after, query: $q, sortKey: UPDATED_AT) {
+          pageInfo { hasNextPage endCursor }
+          nodes { ${orderFields(true)} }
+        }
+      }`,
+      { q: ordersFilter(from, to, since), after },
+    );
+    for (const n of data.orders.nodes) {
+      if (n.lineItems.pageInfo.hasNextPage) return null;
+      out.push({
+        ...n,
+        lineItems: n.lineItems.edges.map((e) => e.node),
+        shippingLines: n.shippingLines.edges.map((e) => e.node),
+        fulfillments: n.fulfillments.map((f) => ({ ...f, events: [] })),
+      });
+    }
+    if (!data.orders.pageInfo.hasNextPage) return out;
+    if (out.length >= maxOrders) return null;
+    after = data.orders.pageInfo.endCursor;
+  }
 }

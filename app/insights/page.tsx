@@ -47,7 +47,7 @@ function byProduct(orders: Order[]) {
 }
 
 function Insights() {
-  const { month, year, setMonthYear, data, phase, progress, loading, error, refresh } = useMonthData();
+  const { month, year, setMonthYear, data, sync, loading, refresh } = useMonthData();
   const range = monthRangeUTC(month, year);
   const placed = useMemo(
     () => (data?.orders ?? []).filter((o) => !o.isTest && new Date(o.createdAt) >= range.start && new Date(o.createdAt) < range.end),
@@ -69,7 +69,7 @@ function Insights() {
         <MonthPicker month={month} year={year} onChange={setMonthYear} onRefresh={refresh} loading={loading} />
       </PageHeader>
 
-      <LoadState phase={phase} progress={progress} error={error} month={month} year={year} onRetry={refresh} hasData={!!data} />
+      <LoadState sync={sync} />
 
       {data && (
         <>

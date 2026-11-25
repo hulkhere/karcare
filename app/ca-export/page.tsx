@@ -36,7 +36,7 @@ function Rule({ ok, label, count, amount, detail }: { ok: boolean; label: string
 const sum = (list: InvoiceData[]) => list.reduce((s, i) => s + i.total, 0);
 
 function CaExport() {
-  const { month, year, setMonthYear, data, phase, progress, loading, error, refresh } = useMonthData({ defaultToPrevious: true });
+  const { month, year, setMonthYear, data, sync, loading, refresh } = useMonthData({ defaultToPrevious: true });
   const [busy, setBusy] = useState(false);
   const [step, setStep] = useState("");
   const [genError, setGenError] = useState<string | null>(null);
@@ -80,7 +80,7 @@ function CaExport() {
         <MonthPicker month={month} year={year} onChange={setMonthYear} onRefresh={refresh} loading={loading} />
       </PageHeader>
 
-      <LoadState phase={phase} progress={progress} error={error} month={month} year={year} onRetry={refresh} hasData={!!data} />
+      <LoadState sync={sync} />
 
       {data && !complete && (
         <Alert tone="amber">

@@ -22,7 +22,7 @@ npm test                     # unit tests for tax / numbering / eligibility
 | `SHOPIFY_API_VERSION` | no | Default `2026-07` |
 | `GOOGLE_SHEET_CSV_URL` | for Profit | Published CSV link of the ad-spend sheet (see below) |
 
-\*One of the two auth options. The app needs the **`read_orders`** and **`read_all_orders`** scopes (the latter for orders older than 60 days).
+\*One of the two auth options. The app needs the **`read_orders`** and **`read_all_orders`** scopes (the latter for orders older than 60 days), plus **`read_reports`** for product-page visits (CVR on the Profit tab — without it CVR shows "–" and everything else works).
 
 On Vercel, add the same variables under Project → Settings → Environment Variables. Never commit `.env.local`.
 
@@ -46,14 +46,19 @@ An invoice is created **on the day money is received**, and every invoice gets t
 
 ## How data is loaded
 
-To number invoices in order, the app counts every order since the start of the series. It uses a Shopify **bulk export** (one request, no rate limits, typically 10–40 seconds), reused for 30 minutes across tabs and months; **Refresh** pulls a fresh one.
+To number invoices in order, the app needs every order since the start of the series. They're kept **in the browser** (IndexedDB) so nothing is downloaded twice:
+
+- **First visit in a browser** – one Shopify **bulk export** of the whole series (10–40 seconds), saved locally.
+- **Every visit after that** – the saved orders show instantly and every tab and month is computed in the browser. In the background the app asks Shopify only for orders **changed since the last sync** (new orders, deliveries, RTOs and cancellations all update the order) — usually 1–2 seconds — and merges them in. If a lot changed (over ~200 orders), it uses a bulk export for just those.
+- **Refresh** – fetches changes now. **Reload everything** – downloads the whole series again (only if something looks off).
+- The Profit tab also reads the ad-spend sheet (cached 2 minutes) and product-page visits (cached 10 minutes).
 
 ## Tabs
 
 - **Orders** – orders placed in the month plus earlier orders paid in it, with delivery status and invoice number. Filters: search (order #, invoice #, customer, city, AWB), invoice status, payment, delivery status, state; delivery-status chips filter too.
 - **CA Export** – the standard rules with counts, the month's number range, and one button that downloads a ZIP for the CA: all invoices in one PDF, each invoice as its own PDF, invoice register, state-wise and HSN summaries (CSV).
 - **GST Summary** – state-wise and HSN totals for GSTR-1 (filter: prepaid / COD delivered / advances retained), plus orders not invoiced this month and why.
-- **Profit** – cash collected, every cost as paid, GST payable / input credit / net GST, and profit in pocket — overall, by product and by day. The day-by-day table also shows each product's final profit per day (after GST and that product's ad spend).
+- **Profit** – cash collected, every cost as paid, GST payable / input credit / net GST, and profit in pocket — overall, by product and by day. The day-by-day table also shows each product's final profit per day (after GST and that product's ad spend), with its ROAS and CVR in small text underneath. **Daily trends** charts revenue, ROAS and CVR for complete days (today is left out), for all products or one, with the last full day compared to the day before.
 - **Changes** – a dated log of every cost, selling-price, product, packaging, GST-code and rule change (filter by month for the monthly review), plus today's rates read live from `lib/costs.ts`. Add an entry to `lib/changelog.ts` with every such change.
 - **Insights** – orders placed, prepaid vs COD, delivered / RTO / cancelled with RTO rate, orders per product, and GST per product.
 
@@ -68,6 +73,9 @@ Orders count on the day they're placed (the day the ad money was spent). Amounts
 | Cancelled before shipping | ₹99 advance | ₹0 | ₹0 | ₹0 | fee lost |
 
 COD orders still in transit are counted at the recent COD delivery rate; **Confirmed profit** leaves them out. All rates are in `lib/costs.ts`.
+
+- **ROAS** = collected ÷ ad spend from the sheet (ex-GST, as in Ads Manager). Shows "–" until that day's spend is entered.
+- **CVR** = orders ÷ visits that landed on the product's page (Shopify analytics, by landing page). Checkout runs on Fastrr, so Shopify's own conversion rate can't see these orders. Each product's page is matched by its handle in `lib/costs.ts` — add `handle` when adding a product.
 
 ### Products
 
@@ -104,8 +112,10 @@ Publish it: File → Share → Publish to web → choose the **Ad spend** tab �
 ## Structure
 
 - `lib/orders.ts` – money-event rules, numbering (`buildMonth`) and invoice maths — pure and unit-tested
-- `lib/shopify.ts` – Shopify auth and bulk export; `lib/raw.ts` – export parsing
-- `app/api/sync` – start / poll the export; `app/api/month` – a month's orders and invoices
+- `lib/shopify.ts` – Shopify auth, bulk export, changed-orders query, landing-page visits; `lib/raw.ts` – export parsing
+- `lib/orderStore.ts` – the browser's saved copy of orders and the sync (full / changes only); `lib/useMonthData.ts` – computes each tab's view from it
+- `app/api/sync` – start a sync (changed orders straight back, or a bulk export id) / poll the export; `app/api/export` – a finished export, in pages; `app/api/adspend`, `app/api/sessions` – ad spend sheet and product-page visits
+- `lib/trend.ts`, `components/TrendChart.tsx` – daily revenue / ROAS / CVR
 - `lib/export.ts` – register / state-wise / HSN / product summaries
 - `lib/profit.ts`, `lib/costs.ts`, `lib/sheet.ts` – profit maths, unit costs, ad-spend sheet
 - `components/InvoicePDF.tsx` – PDF template; PDFs and the ZIP are built in the browser

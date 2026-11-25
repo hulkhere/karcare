@@ -41,14 +41,32 @@ export interface Counts {
   pending: number;
 }
 
+/** Store visits that landed on a product's page on a day (Shopify analytics). */
+export interface SessionRow {
+  date: string; // YYYY-MM-DD (IST)
+  product: string;
+  sessions: number;
+}
+
+/** One product on one day — for its profit, ROAS (collected ÷ ad spend) and CVR (orders ÷ visits). */
+export interface ProductDay {
+  profit: number; // after GST and the product's ads
+  collected: number; // incl. GST (pending COD at the delivery rate), as everywhere on the Profit tab
+  adSpend: number; // sheet, ex-GST
+  orders: number;
+  sessions: number | null; // null when visits aren't available
+}
+
 export type ProfitStatus = "Delivered" | "Prepaid" | "RTO" | "Cancelled" | "Pending";
 
 export interface ProfitRow extends Pnl, Counts {
   key: string; // day (YYYY-MM-DD) or product title
   /** Profit from orders whose outcome is known (pending COD excluded), after all ads */
   confirmedProfit: number;
-  /** Day rows only: final profit per product that day (after GST and that product's ads) */
-  byProduct?: Record<string, number>;
+  /** Visits to product pages (null when unavailable) */
+  sessions: number | null;
+  /** Day rows only: each product that day */
+  byProduct?: Record<string, ProductDay>;
 }
 
 export interface ProfitData {
@@ -74,8 +92,15 @@ export interface ProfitData {
     skipped: string[];
   };
   missingCosts: string[];
+  /** Product page visits, for CVR */
+  sessions: { available: boolean; error: string | null; needsPermission: boolean };
   syncedAt: string;
 }
+
+/** Collected ÷ ad spend (ex-GST, as in Ads Manager); null when no spend was entered. */
+export const roas = (collected: number, adSpend: number) => (adSpend > 0 ? collected / adSpend : null);
+/** Orders ÷ product page visits; null when visits aren't available. */
+export const cvr = (orders: number, sessions: number | null) => (sessions ? orders / sessions : null);
 
 /** What one scenario of an order costs (GST-inclusive amounts, COGS as-is). */
 interface Scenario {
@@ -132,7 +157,7 @@ function statusOf(o: Normalized): ProfitStatus {
 const MONEY = ["collected", "cogs", "shipping", "gateway", "packaging", "ads", "adSpend", "gstOutput", "gstInput", "netGst", "profit", "confirmedProfit"] as const;
 
 const emptyRow = (key: string): ProfitRow => ({
-  key, collected: 0, cogs: 0, shipping: 0, gateway: 0, packaging: 0, ads: 0, adSpend: 0,
+  key, sessions: null, collected: 0, cogs: 0, shipping: 0, gateway: 0, packaging: 0, ads: 0, adSpend: 0,
   gstOutput: 0, gstInput: 0, netGst: 0, profit: 0, confirmedProfit: 0,
   orders: 0, units: 0, delivered: 0, rto: 0, cancelled: 0, pending: 0,
 });
@@ -185,7 +210,11 @@ export function buildProfit(
   all: Normalized[],
   ym: YM,
   ads: { rows: AdRow[]; configured: boolean; error: string | null; skipped?: string[] },
-  opts: { now?: Date; syncedAt?: string } = {},
+  opts: {
+    now?: Date;
+    syncedAt?: string;
+    sessions?: { available: boolean; error: string | null; needsPermission?: boolean; rows: SessionRow[] };
+  } = {},
 ): ProfitData {
   const now = opts.now ?? new Date();
   const range = monthRangeUTC(ym.month, ym.year);
@@ -202,6 +231,8 @@ export function buildProfit(
     if (!map.has(key)) map.set(key, emptyRow(key));
     return map.get(key)!;
   };
+  const productDay = (d: ProfitRow, title: string) =>
+    ((d.byProduct ??= {})[title] ??= { profit: 0, collected: 0, adSpend: 0, orders: 0, sessions: null });
 
   // Every day of the month up to today, so days with only ad spend still show
   for (let t = range.start.getTime(); t < Math.min(range.end.getTime(), now.getTime()); t += 864e5) {
@@ -254,7 +285,6 @@ export function buildProfit(
     }
 
     const day = row(days, dayOf(o.createdAt));
-    const dayProducts = (day.byProduct ??= {});
     const counted = new Set<ProfitRow>();
     const addCounts = (r: ProfitRow, units: number) => {
       r.units += units;
@@ -270,7 +300,10 @@ export function buildProfit(
       const ln = lines[i];
       const netGst = ln.gstOutput - ln.gstInput;
       const profit = ln.collected - ln.cogs - ln.shipping - ln.gateway - ln.packaging - netGst;
-      dayProducts[l.title] = (dayProducts[l.title] ?? 0) + profit;
+      const pd = productDay(day, l.title);
+      pd.profit += profit;
+      pd.collected += ln.collected;
+      if (!counted.has(row(products, l.title))) pd.orders++;
       for (const r of [day, row(products, l.title), totals]) {
         r.collected += ln.collected;
         r.cogs += ln.cogs;
@@ -297,8 +330,9 @@ export function buildProfit(
     // You pay spend + 18% GST; the GST comes back as input credit, so profit drops by the spend.
     const gst = a.spend * (COSTS.adsGstRate / 100);
     if (title) {
-      const bp = (row(days, a.date).byProduct ??= {});
-      bp[title] = (bp[title] ?? 0) - a.spend;
+      const pd = productDay(row(days, a.date), title);
+      pd.profit -= a.spend;
+      pd.adSpend += a.spend;
     }
     for (const r of [row(days, a.date), title ? row(products, title) : null, totals]) {
       if (!r) continue;
@@ -311,6 +345,27 @@ export function buildProfit(
     }
     if (!title) unassigned.set(a.product || "(blank)", (unassigned.get(a.product || "(blank)") ?? 0) + a.spend);
     gstIn.ads += gst;
+  }
+
+  // Product page visits, for CVR — only products in the catalogue have a known page
+  const visits = opts.sessions;
+  if (visits?.available) {
+    for (const d of days.values()) d.sessions = 0;
+    for (const p of products.values()) p.sessions = 0;
+    totals.sessions = 0;
+    for (const v of visits.rows) {
+      const d = days.get(v.date);
+      if (!d) continue; // outside the month, or a future day
+      const add = (r: ProfitRow) => (r.sessions = (r.sessions ?? 0) + v.sessions);
+      add(d);
+      add(totals);
+      const pr = products.get(v.product); // don't add products that had no orders or ads this month
+      if (pr) add(pr);
+      const pd = productDay(d, v.product);
+      pd.sessions = (pd.sessions ?? 0) + v.sessions;
+    }
+    // A product with orders but no visits recorded that day had 0 visits
+    for (const d of days.values()) for (const pd of Object.values(d.byProduct ?? {})) pd.sessions ??= 0;
   }
 
   const round = (r: ProfitRow): ProfitRow => {
@@ -332,7 +387,12 @@ export function buildProfit(
       .sort((a, b) => a.key.localeCompare(b.key))
       .map((d) => ({
         ...round(d),
-        byProduct: Object.fromEntries(Object.entries(d.byProduct ?? {}).map(([k, v]) => [k, r2(v)])),
+        byProduct: Object.fromEntries(
+          Object.entries(d.byProduct ?? {}).map(([k, v]) => [
+            k,
+            { ...v, profit: r2(v.profit), collected: r2(v.collected), adSpend: r2(v.adSpend) },
+          ]),
+        ),
       })),
     products: [...products.values()].sort((a, b) => b.collected - a.collected).map(round),
     gst: {
@@ -355,6 +415,11 @@ export function buildProfit(
       skipped: ads.skipped ?? [],
     },
     missingCosts: [...missing],
+    sessions: {
+      available: !!visits?.available,
+      error: visits?.error ?? null,
+      needsPermission: !!visits?.needsPermission,
+    },
     syncedAt: opts.syncedAt ?? now.toISOString(),
   };
 }

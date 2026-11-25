@@ -7,8 +7,9 @@ import { Alert, Card, EmptyState, PageHeader, Stat } from "@/components/ui";
 import { COSTS } from "@/lib/costs";
 import { formatDateIST, monthLabel } from "@/lib/dates";
 import { formatINR } from "@/lib/invoice";
-import type { ProfitData, ProfitRow } from "@/lib/profit";
-import { useMonthData } from "@/lib/useMonthData";
+import { cvr, roas, type ProductDay, type ProfitData, type ProfitRow } from "@/lib/profit";
+import { TrendChart } from "@/components/TrendChart";
+import { useProfitData } from "@/lib/useMonthData";
 
 const r = (n: number) => `${n < 0 ? "−" : ""}₹${formatINR(Math.abs(n))}`;
 const pct = (a: number, b: number) => (b ? `${((a / b) * 100).toFixed(1)}%` : "—");
@@ -23,12 +24,23 @@ const shortName = (title: string) => title.split(" - ")[0];
 
 const sales = (t: ProfitRow) => t.collected - t.gstOutput; // sales ex-GST, for margins
 
+/** "ROAS 2.10× · CVR 1.8%" — "–" until ad spend is entered / visits are available */
+function RoasCvr({ x }: { x: Pick<ProductDay, "collected" | "adSpend" | "orders" | "sessions"> }) {
+  const ro = roas(x.collected, x.adSpend);
+  const cv = cvr(x.orders, x.sessions);
+  return (
+    <div className="mt-0.5 text-[11px] font-normal leading-tight text-slate-400" title="ROAS = collected ÷ ad spend · CVR = orders ÷ product page visits">
+      ROAS {ro === null ? "–" : `${ro.toFixed(2)}×`} · CVR {cv === null ? "–" : `${(cv * 100).toFixed(1)}%`}
+    </div>
+  );
+}
+
 function Line({ label, value, base, strong, muted, bar = true }: {
   label: string; value: number; base: number; strong?: boolean; muted?: boolean; bar?: boolean;
 }) {
   return (
     <div className={`flex items-center gap-3 text-sm ${strong ? "font-semibold" : ""}`}>
-      <div className={`w-60 shrink-0 ${muted ? "text-slate-500" : "text-slate-700"}`}>{label}</div>
+      <div className={`w-36 shrink-0 sm:w-60 ${muted ? "text-slate-500" : "text-slate-700"}`}>{label}</div>
       <div className="relative h-2 flex-1 overflow-hidden rounded-full bg-slate-100">
         {bar && (
           <div
@@ -37,7 +49,7 @@ function Line({ label, value, base, strong, muted, bar = true }: {
           />
         )}
       </div>
-      <div className={`w-32 text-right tabular-nums ${strong ? tone(value) : ""}`}>{r(value)}</div>
+      <div className={`w-28 shrink-0 text-right tabular-nums sm:w-32 ${strong ? tone(value) : ""}`}>{r(value)}</div>
     </div>
   );
 }
@@ -171,9 +183,7 @@ function Outcomes({ row }: { row: ProfitRow }) {
 }
 
 function Profit() {
-  const { month, year, setMonthYear, data, phase, progress, loading, error, refresh } = useMonthData<ProfitData>({
-    endpoint: "/api/profit",
-  });
+  const { month, year, setMonthYear, data, sync, loading, refresh } = useProfitData();
   const t = data?.totals;
 
   return (
@@ -182,7 +192,7 @@ function Profit() {
         <MonthPicker month={month} year={year} onChange={setMonthYear} onRefresh={refresh} loading={loading} />
       </PageHeader>
 
-      <LoadState phase={phase} progress={progress} error={error} month={month} year={year} onRetry={refresh} hasData={!!data} />
+      <LoadState sync={sync} />
 
       {data && !data.ads.configured && (
         <Alert tone="amber">
@@ -210,6 +220,16 @@ function Profit() {
           Ad spend with a product name that doesn&apos;t match any Shopify product (counted in the total only):{" "}
           {data.ads.unassigned.map((u) => `${u.product} ${r(u.spend)}`).join(", ")}
         </Alert>
+      )}
+      {data?.sessions.needsPermission && (
+        <Alert tone="sky">
+          <strong>CVR needs one Shopify permission.</strong> In the Shopify Dev Dashboard open the KarCare app → Versions →
+          new version → add the <code>read_reports</code> access scope → release, then approve the update in Shopify admin.
+          Until then CVR shows &ldquo;–&rdquo;.
+        </Alert>
+      )}
+      {data && !data.sessions.available && !data.sessions.needsPermission && data.sessions.error && (
+        <Alert tone="amber">Couldn&apos;t load store visits for CVR: {data.sessions.error}. CVR shows &ldquo;–&rdquo; until it works.</Alert>
       )}
       {data && data.missingCosts.length > 0 && (
         <Alert>No product cost set for: {data.missingCosts.join(", ")} — counted as ₹0 until added in lib/costs.ts.</Alert>
@@ -239,6 +259,13 @@ function Profit() {
             <Stat label="Profit / order" value={t.orders ? r(t.profit / t.orders) : "—"} />
           </div>
 
+          <Card
+            title="Daily trends"
+            subtitle="Complete days only · revenue, ROAS and CVR share one day axis — hover or tap a day"
+          >
+            <TrendChart data={data} />
+          </Card>
+
           <div className="grid gap-6 lg:grid-cols-5">
             <Card className="lg:col-span-3" title="Where the money goes" subtitle="Cash in and out, then GST settled">
               <Breakdown t={t} />
@@ -261,6 +288,10 @@ function Profit() {
                 • COD still in transit: counted at your recent delivery rate, <strong>{Math.round(data.deliveryRate * 100)}%</strong>
                 {data.deliveryRateSample >= 10 ? ` (last ${data.deliveryRateSample} settled COD orders)` : " (default until 10 COD orders settle)"}.
                 &ldquo;Confirmed profit&rdquo; leaves them out.
+              </li>
+              <li>
+                • Under each product&apos;s profit: <strong>ROAS</strong> = collected ÷ ad spend from the sheet (– until spend is
+                entered) · <strong>CVR</strong> = orders ÷ visits that landed on its product page (Shopify analytics).
               </li>
               <li>• <strong>Every profit here is after paying net GST</strong>: collected − everything paid − net GST. Only income tax is left.</li>
             </ul>
@@ -309,7 +340,10 @@ function Profit() {
                       <td className={`${td} text-slate-500`}>{r(p.gstOutput)}</td>
                       <td className={`${td} text-slate-500`}>{r(p.gstInput)}</td>
                       <td className={td}>{r(p.netGst)}</td>
-                      <td className={`${td} font-semibold ${tone(p.profit)}`}>{r(p.profit)}</td>
+                      <td className={`${td} font-semibold ${tone(p.profit)}`}>
+                        {r(p.profit)}
+                        <RoasCvr x={p} />
+                      </td>
                       <td className={td}>{pct(p.profit, sales(p))}</td>
                       <td className={td}>{p.orders ? r(p.profit / p.orders) : "—"}</td>
                     </tr>
@@ -366,8 +400,9 @@ function Profit() {
                       {data.products.map((p) => {
                         const v = d.byProduct?.[p.key];
                         return (
-                          <td key={p.key} className={`${td} ${v === undefined ? "text-slate-300" : tone(v)}`}>
-                            {v === undefined ? "—" : r(v)}
+                          <td key={p.key} className={`${td} align-top ${v === undefined ? "text-slate-300" : tone(v.profit)}`}>
+                            {v === undefined ? "—" : r(v.profit)}
+                            {v !== undefined && <RoasCvr x={v} />}
                           </td>
                         );
                       })}
@@ -387,8 +422,9 @@ function Profit() {
                     <td className={td}>{r(t.gstInput)}</td>
                     <td className={td}>{r(t.netGst)}</td>
                     {data.products.map((p) => (
-                      <td key={p.key} className={`${td} ${tone(p.profit)}`}>
+                      <td key={p.key} className={`${td} align-top ${tone(p.profit)}`}>
                         {r(p.profit)}
+                        <RoasCvr x={p} />
                       </td>
                     ))}
                     <td className={`${td} ${tone(t.profit)}`}>{r(t.profit)}</td>

@@ -23,7 +23,7 @@ const KINDS: { value: Kind; label: string }[] = [
 ];
 
 function Summary() {
-  const { month, year, setMonthYear, data, phase, progress, loading, error, refresh } = useMonthData();
+  const { month, year, setMonthYear, data, sync, loading, refresh } = useMonthData();
   const [kind, setKind] = useState<Kind>("all");
   const [why, setWhy] = useState<"all" | "pending_cod" | "other_month" | "skipped">("all");
 
@@ -47,7 +47,7 @@ function Summary() {
         <MonthPicker month={month} year={year} onChange={setMonthYear} onRefresh={refresh} loading={loading} />
       </PageHeader>
 
-      <LoadState phase={phase} progress={progress} error={error} month={month} year={year} onRetry={refresh} hasData={!!data} />
+      <LoadState sync={sync} />
 
       {data && (
         <>
